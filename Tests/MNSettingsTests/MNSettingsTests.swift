@@ -6,6 +6,7 @@ final class MNSettingsTests: XCTestCase {
         // This is an example of a functional test case.
         // Use XCTAssert and related functions to verify your tests produce the correct
         // results.
-        XCTAssertEqual(MNSettings().text, "Hello, World!")
+        //MNSettings.standard.setValue(key: "Test count", value: 1)
+        //let count : Int = MNSettings.standard.getValue(key: "Test count")
     }
 }
