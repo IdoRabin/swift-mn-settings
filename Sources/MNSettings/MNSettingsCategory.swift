@@ -18,7 +18,7 @@ fileprivate let dlog : DSLogger? = DLog.forClass("MNSettingsCategory")?.setting(
 
 /// A settings category - may contain other settings categories (nesting). It is intended to contain MNSettable property wrappers. Will registers and validate all names/keys of all MNettable properties:
 ///
-public class MNSettingsCategory { // : CustomDebugStringConvertible
+open class MNSettingsCategory { // : CustomDebugStringConvertible
     // MARK: Const
     // MARK: Static
     public static let MAX_NESTING_LEVEL = 6
@@ -31,7 +31,7 @@ public class MNSettingsCategory { // : CustomDebugStringConvertible
     private (set) public weak var parent : MNSettingsCategory? = nil
     
     // MARK: Lifecycle
-    init(settings:MNSettings? = MNSettings.standard, customName:String? = nil) {
+    public init(settings:MNSettings? = MNSettings.standard, customName:String? = nil) {
         var custmName = customName
         if let custmName = custmName {
             if custmName.count < 2 {

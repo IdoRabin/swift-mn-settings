@@ -25,9 +25,13 @@ public typealias AnyMNSettableValue = any MNSettableValue
 fileprivate var mnSettings_registry : [String:Weak<MNSettings>] = [:]
 fileprivate var mnSettings_registryLock = MNLock(name: "mnSettings_registry_lock")
 
-public class MNSettings {
+public typealias MNSettingsLoadedBlock = (_ settings : MNSettings)->Bool /* return true to get unregistered from further whenLoaded's*/
+
+open class MNSettings {
+    
+    
     // MARK: Const
-    public typealias SettingsLoadedBlock = (_ settings : MNSettings)->Bool /* return true to get unregistered from further whenLoaded's*/
+    
     internal class OtherCategory : MNSettingsCategory { } // Speialized class for other category
     
     // MARK: Types
@@ -40,7 +44,6 @@ public class MNSettings {
     enum MNSChange : Int, Codable {
         case value
         case key
-        
         var asString : String {
             var result = "unknown"
             switch self {
@@ -70,23 +73,20 @@ public class MNSettings {
     static public let CATEGORY_DELIMITER = "."
     
     // MARK: Static
-    @SkipEncode static public var whenLoaded : [SettingsLoadedBlock] = [] //  wasloaded
+    @SkipEncode static public var whenLoaded : [MNSettingsLoadedBlock] = [] //  wasloaded
     @SkipEncode static var keysNamingConvention : MNSettingKeysNamingConvetion = .snakeCase
     
     // MARK: Properties / members
     // MARK: Private
     // MARK: Lifecycle
     // MARK: Public
-    // var children : [Weak<MNSettingsContainer>]
-    // weak var parent : MNSettingsContainer
-    
     
     // MARK: Static
     
     
     // MARK: Properties / members
     private (set) var values : [MNSCategoryName:[MNSKey : AnyMNSettableValue]] = [:]
-    private (set) var name: String
+    private (set) public var name: String
     private (set) var allKeys = Set<String>()
     
     @SkipEncode private var observers : [MNSKey:[AnyMNSettabled]] = [:]
@@ -96,11 +96,11 @@ public class MNSettings {
     @SkipEncode private (set) var persistors : [any MNSettingsPersistor] = []
     @SkipEncode private (set) var defaultsProvider : (any MNSettingsProvider)? = nil
     @SkipEncode private (set) var providersLoadedCount : Int = 0
-    @SkipEncode private (set) var bootState : MNBootState = .unbooted
+    @SkipEncode private (set) public var bootState : MNBootState = .unbooted
     
     // MARK: Singleton-ish
     @SkipEncode static private (set) var _standard : MNSettings? = nil
-    static var standard : MNSettings {
+    public static var standard : MNSettings {
         get {
             if _standard == nil {
                 _standard = MNSettings(named: Self.DEFAULT_MNSETTINGS_NAME, persistors: [MNUserDefaultsPersistor.standard])
@@ -111,7 +111,7 @@ public class MNSettings {
     }
     
     // MARK: Lifecycle
-    public init(named name:String, persistors: [any MNSettingsPersistor] = DEFAULT_PERSISTORS, defaultsProvider:(any MNSettingsProvider)? = nil) {
+    public required init(named name:String, persistors: [any MNSettingsPersistor] = DEFAULT_PERSISTORS, defaultsProvider:(any MNSettingsProvider)? = nil) {
         guard name.count > 0 else {
             let err = MNError(code:.misc_bad_input, reason: "MNSettings.init(...) name should be at least one charachter")
             preconditionFailure(err.description)
@@ -234,6 +234,8 @@ public class MNSettings {
             return
         }
         
+        dlog?.info("\(type(of:settings)).\(settings.name) was loaded!")
+        
         whenLoaded.forEachIndex { index, block in
             if block(settings) {
                 toRemove.append(index)
@@ -308,7 +310,7 @@ public class MNSettings {
     }
     
     // MARK: Internal
-    func categoryName(forKey key : MNSKey, delimiter:String = MNSettings.CATEGORY_DELIMITER)->MNSCategoryName? {
+    public func categoryName(forKey key : MNSKey, delimiter:String = MNSettings.CATEGORY_DELIMITER)->MNSCategoryName? {
         return Self.categoryName(forKey: key, delimiter: delimiter)
     }
     
@@ -375,6 +377,7 @@ public class MNSettings {
         }
         return result
     }
+    
     public static func updateRegistry() {
         mnSettings_registryLock.withLock {
             mnSettings_registry = mnSettings_registry.compactMapValues({ aweak in
@@ -711,13 +714,17 @@ extension MNSettings {
         if var vals = self.values[cat], vals.hasKey(key) {
             dlog?.note("\(self.name) unregisterSettable \(key) cat: \(cat)")
             vals.removeValue(forKey: key)
-            if vals.count == 0 {
-                self.values[cat] = nil  // unRegisterValue
-            } else {
-                self.values[cat] = vals // unRegisterValue
+            self.lock.withLock {
+                if vals.count == 0 {
+                    self.values[cat] = nil  // unRegisterValue
+                } else {
+                    self.values[cat] = vals // unRegisterValue
+                }
             }
         } else {
-            dlog?.verbose(log:.note, "[\(self.name)] failed to find key: \(key) vals: \(self.values) cats: \(self.categories)")
+            self.lock.withLock {
+                dlog?.verbose(log:.note, "[\(self.name)] failed to find key: \(key) vals: \(self.values) cats: \(self.categories)")
+            }
         }
     }
     
@@ -767,14 +774,34 @@ extension MNSettings {
     }
     
     // MARK: MNSettingsPersistor
-    public func bulkChanges(block: @escaping  (_ settings : MNSettings) throws -> Void) throws {
-        
-        var newKey = "{\(name)}"
+    private func createBulkChangesKey()->String {
+        return "{\(name).\(Date.now.ISO8601Format())}"
+    }
+    
+    public func asyncBulkChanges(block: @escaping  (_ settings : MNSettings) async throws -> Void) async throws {
         if self.isBulkChangingNow {
-            dlog?.warning("\(newKey) bulkChanges - already changing, will wait.")
+            dlog?.warning("\(name) asyncBulkChanges - already changing, will wait.")
+        }
+        
+        let newKey = createBulkChangesKey()
+        try await self.lock.withAsyncLock {
+            dlog?.verbose("bulkChanges: \(newKey)")
+            self.bulkChangeKey = newKey
+            
+            // will allow all changes in one lock / unlock bulk and prevent saving while bulk work is in progress
+            try await block(self)
+
+            self.bulkChangeKey = nil
+        }
+    }
+    
+    public func bulkChanges(block: @escaping  (_ settings : MNSettings) throws -> Void) throws {
+
+        if self.isBulkChangingNow {
+            dlog?.warning("\(name) bulkChanges - already changing, will wait.")
         }
 
-        newKey += Date.now.ISO8601Format()
+        let newKey = createBulkChangesKey()
         try self.lock.withLockVoid {
             dlog?.verbose("bulkChanges: \(newKey)")
             self.bulkChangeKey = newKey
@@ -787,20 +814,21 @@ extension MNSettings {
     }
     
     public func resetToDefaults() async throws {
-//        try await self.bulkChanges(block: { settings in
-//            settings.values = [:]
-//            settings.changes = []
-//
-//            // Get all key-values
-//            if let defaults = try await self.defaultsProvider?.getAllKeyValues() {
-//                for persistor in self.persistors {
-//                    try await persistor.setValuesForKeys(dict: defaults)
-//                }
-//                try self.unsafeNotifyObservers(changes: defaults, isDefaults: true, excluding: [])
-//            } else {
-//                dlog?.note("{\(self.name)} resetToDefaults - defaultsProvider: \(self.defaultsProvider.descOrNil) failed fetching defaults!")
-//            }
-//        })
+        try await self.asyncBulkChanges(block: { settings in
+            settings.values = [:]
+            settings.changes = []
+
+            // Get all key-values
+            let defaults = try await self.defaultsProvider?.fetchAllKeyValues() ?? [:]
+            if defaults.count > 0 {
+                for persistor in self.persistors {
+                    try await persistor.setValuesForKeys(dict: defaults)
+                }
+                try self.unsafeNotifyObservers(changes: defaults, isDefaults: true, excluding: [])
+            } else {
+                dlog?.note("{\(self.name)} resetToDefaults - defaultsProvider: \(self.defaultsProvider.descOrNil) failed fetching defaults!")
+            }
+        })
     }
     
     private func appendChange(key:MNSKey, action:MNSChange, from:String?, to:String?) {
@@ -825,35 +853,39 @@ extension MNSettings {
         
         // Switch in values
         if let fromCat = self.categoryName(forKey: fromKey) {
-            if var vals = values[fromCat] {
-                let prev = vals[fromKey]?.description ?? "<nil>"
-                
-                vals[fromKey] = nil
-                if vals.count == 0 {
-                    values[fromCat] = nil
-                } else {
-                    values[fromCat] = vals
-                }
-                
-                if !isBoot {
-                    self.appendChange(key: fromKey, action: .value, from: prev, to: nil)
-                    self.appendChange(key: fromKey, action: .key, from: fromKey, to: nil)
+            self.lock.withLock {
+                if var vals = self.values[fromCat] {
+                    let prev = vals[fromKey]?.description ?? "<nil>"
+                    
+                    vals[fromKey] = nil
+                    if vals.count == 0 {
+                        self.values[fromCat] = nil
+                    } else {
+                        self.values[fromCat] = vals
+                    }
+                    
+                    if !isBoot {
+                        self.appendChange(key: fromKey, action: .value, from: prev, to: nil)
+                        self.appendChange(key: fromKey, action: .key, from: fromKey, to: nil)
+                    }
                 }
             }
         }
         
         if let toCat = self.categoryName(forKey: toKey) {
-            var vals = values[toCat] ?? [:]
-            vals[toKey] = value // Set new value
-            if vals.count == 0 {
-                values[toCat] = nil
-            } else {
-                values[toCat] = vals
-            }
-            
-            if !isBoot {
-                self.appendChange(key: toKey, action: .key, from: nil, to: toKey)
-                self.appendChange(key: toKey, action: .value, from: nil, to: value.description)
+            self.lock.withLock {
+                var vals = self.values[toCat] ?? [:]
+                vals[toKey] = value // Set new value
+                if vals.count == 0 {
+                    self.values[toCat] = nil
+                } else {
+                    self.values[toCat] = vals
+                }
+                
+                if !isBoot {
+                    self.appendChange(key: toKey, action: .key, from: nil, to: toKey)
+                    self.appendChange(key: toKey, action: .value, from: nil, to: value.description)
+                }
             }
         }
         
@@ -875,7 +907,10 @@ extension MNSettings {
         dlog?.verbose(">>[2]  valueWasChanged for: \(key) from:\(fromValue) to:\(toValue)")
         // Validate in values
         if let category = self.categoryName(forKey: key) {
-            var vals = values[category] ?? [:]
+            var vals : [MNSKey : AnyMNSettableValue] = [:]
+            self.lock.withLock {
+                vals = self.values[category] ?? [:]
+            }
             var shouldChange = false
             if let existingVal = vals[key] {
                 if existingVal.hashValue == fromValue.hashValue {

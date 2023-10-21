@@ -80,15 +80,15 @@ public final class MNSettable<ValueType : MNSettableValue> : Codable {
         if settingsName != self.settings?.name {
             // DO NOT! self.waitForSettingsNamed(settingsName) // using MNExec waitFor...
             // Using completion block observation
-            let block : MNSettings.SettingsLoadedBlock = {[self] asettings in
+            let block : MNSettingsLoadedBlock = {[self] asettings in
                 if settingsName == asettings.name {
                     dlog?.success("[\(asettings.name)] key: \(self.key) recieved settingsName [\(settingsName)] state: [\(asettings.bootState)] was loaded block (delayed)")
                     
                     // fix key if no category:
-                    var cat = asettings.categoryName(forKey: self.key)
+                    var cat = asettings.categoryName(forKey: self.key, delimiter: MNSettings.CATEGORY_DELIMITER)
                     if cat == nil {
                         self.key = MNSettings.sanitizeKey(key)
-                        cat = asettings.categoryName(forKey: self.key)
+                        cat = asettings.categoryName(forKey: self.key, delimiter: MNSettings.CATEGORY_DELIMITER)
                     }
                     
                     // Move to new settings:
