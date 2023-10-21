@@ -33,10 +33,23 @@ let package = Package(
                 // In-House pakcages
                 .product(name: "DSLogger", package: "DSLogger"),
                 .product(name: "MNUtils", package: "MNUtils"),
+            ],
+            swiftSettings: [
+                // Enables better optimizations when building in Release
+                // .unsafeFlags(["-cross-module-optimization"], .when(configuration: .release)),
+                
+                .define("PRODUCTION", .when(configuration: .release)),
+                .define("DEBUG", .when(configuration: .debug)),
             ]
         ),
         .testTarget(
             name: "MNSettingsTests",
-            dependencies: ["MNSettings"]),
+            dependencies: ["MNSettings"],
+            swiftSettings: [
+                .define("DEBUG"),
+                .define("TESTING"),
+            ]
+        ),
+        
     ]
 )

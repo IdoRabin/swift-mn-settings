@@ -9,22 +9,13 @@ import Foundation
 import DSLogger
 import MNUtils
 
-fileprivate let dlog : DSLogger? = DLog.forClass("MNSettable")
+fileprivate let dlog : DSLogger? = DLog.forClass("MNSettable_")?.setting(verbose: false)
 
 public typealias MNSCategoryName = String
 public typealias MNSKey = String
 
-// Registry
-protocol MNSettabled {
-    associatedtype ValType = MNSettableValue
-    
-    var key : MNSKey { get }
-    func setValue(_ newValue:(any MNSettableValue)?) throws
-    func setDefaultValue(_ newDefaultValue:(any MNSettableValue)?) throws
-    func getValue(forKey:MNSKey) throws -> ValType?
-}
-
-final class MNSettable<ValueType : MNSettableValue> : Codable {
+@propertyWrapper
+public final class MNSettable<ValueType : MNSettableValue> : Codable {
     static private var IGNORE_DEFAULTS_KEY : CodingUserInfoKey { CodingUserInfoKey(rawValue: "MNSettable_ignores_defaults")! }
     
     // MARK: Const
@@ -37,22 +28,84 @@ final class MNSettable<ValueType : MNSettableValue> : Codable {
     
     // MARK: Properties / members
     nonisolated private let lock = MNLock(name: "\(MNSettable.self)")
-    private (set) var defaultValue : ValueType?
-    private var _value : ValueType?
+    private (set) var defaultValue : ValueType
+    private var _value : ValueType
     private (set) var key : MNSKey
-    private weak var settings : MNSettings? = MNSettings.standard
+    private(set) public var projectedValue: MNSettable<ValueType>? = nil // Will allow accessing the MNSettable wrapper itself
+    
+    // MARK: @propertywrapper
+    public var wrappedValue: ValueType {
+        get {
+            return self._value
+        }
+        set {
+            do {
+                try self.setValue(newValue)
+            } catch let error {
+                dlog?.warning("\(Self.self).\(key) setWrapperdValue failed with error: \(error.description)")
+            }
+        }
+    }
+    
+    internal (set) public weak var settings : MNSettings? = MNSettings.standard {
+        didSet {
+            if let old = oldValue, old != settings {
+                // Unregister from previous settings instance
+                self.unregisterFromSettings(old)
+            }
+            self.registerToSettings()
+        }
+    }
+    
+    let uuid: UUID = UUID()
     
     // MARK: Lifecycle
-    init(key:MNSKey, value:ValueType?, `default` def:ValueType? = nil, settings:MNSettings? = nil) {
+    init(wrappedValue wv:ValueType? = nil, key:MNSKey, `default` def:ValueType, settings:MNSettings? = nil) {
         self.lock.changeName(to: "\(MNSettable.self).\(key)")
-        self._value = value
+        self._value = wv ?? def
         self.defaultValue = def
-        self.key = key
         self.settings = settings ?? MNSettings.standard
+        self.key = key // MNSettings.sanitizeKey(key)
+        self.projectedValue = self
+        self.registerToSettings()
+    }
+    
+    init(forSettingsNamed settingsName:String, wrappedValue wv:ValueType? = nil, key:MNSKey, `default` def:ValueType) {
+        self.lock.changeName(to: "\(MNSettable.self).\(key)")
+        self._value = wv ?? def
+        self.defaultValue = def
+        self.key = key // MNSettings.sanitizeKey(key)
+        self.settings = MNSettings.instance(byName: settingsName) ?? MNSettings.standard
+        self.projectedValue = self
+        if settingsName != self.settings?.name {
+            // DO NOT! self.waitForSettingsNamed(settingsName) // using MNExec waitFor...
+            // Using completion block observation
+            let block : MNSettings.SettingsLoadedBlock = {[self] asettings in
+                if settingsName == asettings.name {
+                    dlog?.success("[\(asettings.name)] key: \(self.key) recieved settingsName [\(settingsName)] state: [\(asettings.bootState)] was loaded block (delayed)")
+                    
+                    // fix key if no category:
+                    var cat = asettings.categoryName(forKey: self.key)
+                    if cat == nil {
+                        self.key = MNSettings.sanitizeKey(key)
+                        cat = asettings.categoryName(forKey: self.key)
+                    }
+                    
+                    // Move to new settings:
+                    self.setMNSettings(asettings, context: "MNSettable.init(forSettingsNamed:)...whenLoaded(...\(settingsName)")
+                    asettings.registerSettable(self)
+                    return true // should remove from further whenLoaded calls
+                }
+                return false
+            }
+            
+            // Add to whenLoaded callback blocks..
+            MNSettings.whenLoaded.append(block)
+        }
     }
     
     // MARK: Codable
-    init(from decoder: Decoder) throws {
+    public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         
         // Decode only whats needed
@@ -60,10 +113,18 @@ final class MNSettable<ValueType : MNSettableValue> : Codable {
         self._value = try container.decode(ValueType.self, forKey: .value)
         self.lock.changeName(to: "\(MNSettable.self).\(self.key)")
         
-        if decoder.userInfo[Self.IGNORE_DEFAULTS_KEY] as? Bool == false {
-            self.defaultValue = try container.decodeIfPresent(ValueType.self, forKey: CodingKeys.defaultValue)
+        if (decoder.userInfo[Self.IGNORE_DEFAULTS_KEY] as? Bool) ?? false == false {
+            if let val = try container.decodeIfPresent(ValueType.self, forKey: CodingKeys.defaultValue) {
+                self.defaultValue = val
+            } else {
+                let msg = "init(from decoder:) key: \(self.key) try container.decodeIfPresent(ValueType.self, forKey:.defaultValue) returned nil or failed decoding"
+                dlog?.note(msg)
+                throw MNError(code: .misc_failed_loading, reason: msg)
+            }
         } else {
-            self.defaultValue = nil
+            let msg = "init(from decoder:) decoder.userInfo[Self.IGNORE_DEFAULTS_KEY] - we ignore the loaded defaults"
+            dlog?.note(msg)
+            throw MNError(code: .misc_failed_loading, reason: msg)
         }
         
         if let settingsName = try container.decodeIfPresent(String.self, forKey: .settingsName) {
@@ -75,10 +136,11 @@ final class MNSettable<ValueType : MNSettableValue> : Codable {
             }
         }
         
+        self.projectedValue = self
         self.registerToSettings()
     }
     
-    func encode(to encoder: Encoder) throws {
+    public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try lock.withLockVoid {
             try container.encode(self.key,   forKey: .key)
@@ -96,18 +158,56 @@ final class MNSettable<ValueType : MNSettableValue> : Codable {
         }
     }
     
-    func category(forKey key : MNSKey, delimiter:String = "")->MNSCategoryName? {
-        return MNSettings.category(forKey: key, delimiter: delimiter)
+    func categoryName(forKey key : MNSKey, delimiter:String = MNSettings.CATEGORY_DELIMITER)->MNSCategoryName? {
+        return MNSettings.categoryName(forKey: key, delimiter: delimiter)
+    }
+    
+    func fetchValueFromPersistors() async throws ->ValueType? {
+        return try await settings?.fetchValueFromPersistors(forKey: self.key)
+    }
+}
+
+extension MNSettable : CustomStringConvertible {
+    public var description: String {
+        return "<\(Self.self) \"\(key)\">"
     }
 }
 
 extension MNSettable : MNSettabled {
     
-    fileprivate func registerToSettings() {
-        (settings ?? MNSettings.standard).registerObserver(self)
+    // MARK: Equatable
+    public static func == (lhs: MNSettable<ValueType>, rhs: MNSettable<ValueType>) -> Bool {
+        return (lhs.key == rhs.key) && MemoryAddress(of:lhs) == MemoryAddress(of:rhs)
+        //String(memoryAddressOf: lhs as AnyObject) == String(memoryAddressOf: rhs as AnyObject)
     }
     
-    func getValue(forKey akey:MNSKey) throws ->ValueType? {
+    fileprivate func unregisterFromSettings(_ oldSettings:MNSettings) {
+        // dlog?.info("will unregisterObserver from: \(oldSettings.name)")
+        oldSettings.unregisterObserver(self)
+        oldSettings.unregisterSettable(self)
+    }
+    
+    fileprivate func registerToSettings(_ depth: Int = 0) {
+        // NOTE: Timed Recursive
+        guard depth < 16 else {
+            return
+        }
+        
+        // dlog?.info("\(self.key) will registerObserver in: \((settings?.name).descOrNil)")
+        let stt = (settings ?? MNSettings.standard)
+        stt.registerObserver(self)
+        MNExec.exec(afterDelay: 0.03) {[self, stt] in
+            if stt.name == self.settings?.name {
+                stt.registerSettable(self)
+            } else {
+                stt.unregisterSettable(self)
+                stt.unregisterValue(forKey: self.key)
+                stt.unregisterObserver(self)
+            }
+        }
+    }
+    
+    func getValue(forKey akey:MNSKey) throws ->ValueType {
         return try self.lock.withLock {
             if self.key != akey {
                 throw MNError(code: .misc_failed_loading, reason: "getValue(forKey: \(akey) failed becuase wrong key! \(self.key)")
@@ -115,37 +215,76 @@ extension MNSettable : MNSettabled {
             
             return self._value
         }
+    }
+    
+    func setValue(_ newValue:AnyMNSettableValue, forceUpdate:Bool = false) throws {
+        guard let newVal = newValue as? ValueType else {
+            throw MNError(code: .misc_failed_inserting, reason: "Failed setValue with type mismatch! \(Self.self) key: \(self.key) has value type of: \(ValueType.self), not \(type(of:newValue)).")
+        }
+        guard forceUpdate || newVal != _value else {
+            // No need to set the value again...
+            dlog?.verbose(log: .note, "\(Self.self) key: \(self.key) setValue - value \(newVal) is already set!")
+            return
+        }
         
+        let context = "MNSettable.\(self.key).setValue"
+        let prev = self._value
+        self.lock.withLockVoid {
+            self._value = newVal
+            dlog?.verbose(">>[1]  MNSettable.\(self.key).setValue from: \(prev) to: \(newVal)")
+            
+            // Notify within lock
+            self.settings?.valueWasChanged(
+                key: self.key,
+                from: prev,
+                to: newVal,
+                context: context,
+                caller: self)
+        }
     }
     
-    func setValue(_ newValue: (any MNSettableValue)? = nil) throws {
+    func setValue(_ newValue: AnyMNSettableValue) throws {
+        // we need a seperate func to conform to MNSettabled
+        try self.setValue(newValue, forceUpdate: false)
+    }
+    
+    func setDefaultValue(_ newDefaultValue: AnyMNSettableValue) throws {
         try self.lock.withLockVoid {
-            if let newValue = newValue {
-                if let val = newValue as? ValueType {
-                    self._value = val
-                } else {
-                    throw MNError(code: .misc_failed_inserting, reason: "Failed setValue with type mismatch! \(Self.self) key: \(self.key) has value type of: \(ValueType.self), not \(type(of:newValue)).")
-                }
-                
+            if let val = newDefaultValue as? ValueType {
+                self.defaultValue = val
             } else {
-                self._value = nil
+                throw MNError(code: .misc_failed_inserting, reason: "Failed setDefaultValue with type mismatch! \(Self.self) key: \(self.key) has value type of: \(ValueType.self), not \(type(of:newDefaultValue)).")
             }
         }
     }
     
-    func setDefaultValue(_ newDefaultValue: (any MNSettableValue)?) throws {
-        try self.lock.withLockVoid {
-            if let newDefaultValue = newDefaultValue {
-                if let val = newDefaultValue as? ValueType {
-                    self.defaultValue = val
-                } else {
-                    throw MNError(code: .misc_failed_inserting, reason: "Failed setDefaultValue with type mismatch! \(Self.self) key: \(self.key) has value type of: \(ValueType.self), not \(type(of:newDefaultValue)).")
-                }
-                
-            } else {
-                self.defaultValue = nil
-            }
+    func setKey(_ newValue:String, context:String) throws {
+        let skey = MNSettings.sanitizeKey(newValue)
+        guard skey.count > 0 && MNSettings.isKeyHasCategory(skey) else {
+            throw MNError(code: .misc_bad_input, reason: "\(Self.self).setKey failed with new key: \(skey) - it does not contain a category. Use \(MNSettings.CATEGORY_DELIMITER) as a delimiter. first value is the category.")
+        }
+        if skey != key {
+            // dlog?.verbose(log: .success, "Set new key: \"\(key)\" => \"\(skey)\" ")
+            let prev = key
+            self.key = skey
+            
+            settings?.keyWasChanged(
+                from: prev,
+                to: skey,
+                value: self._value,
+                context: context,
+                caller: self)
         }
     }
     
+    func setMNSettings(_ newValue: MNSettings, context: String) {
+        if let prev = self.settings {
+            if newValue == prev {
+                return
+            }
+            self.unregisterFromSettings(prev)
+        }
+        self.settings = newValue
+        self.registerToSettings()
+    }
 }
