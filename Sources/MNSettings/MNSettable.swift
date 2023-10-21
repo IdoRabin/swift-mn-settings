@@ -60,7 +60,7 @@ public final class MNSettable<ValueType : MNSettableValue> : Codable {
     let uuid: UUID = UUID()
     
     // MARK: Lifecycle
-    init(wrappedValue wv:ValueType? = nil, key:MNSKey, `default` def:ValueType, settings:MNSettings? = nil) {
+    public init(wrappedValue wv:ValueType? = nil, key:MNSKey, `default` def:ValueType, settings:MNSettings? = nil) {
         self.lock.changeName(to: "\(MNSettable.self).\(key)")
         self._value = wv ?? def
         self.defaultValue = def
@@ -70,7 +70,7 @@ public final class MNSettable<ValueType : MNSettableValue> : Codable {
         self.registerToSettings()
     }
     
-    init(forSettingsNamed settingsName:String, wrappedValue wv:ValueType? = nil, key:MNSKey, `default` def:ValueType) {
+    public init(forSettingsNamed settingsName:String, wrappedValue wv:ValueType? = nil, key:MNSKey, `default` def:ValueType) {
         self.lock.changeName(to: "\(MNSettable.self).\(key)")
         self._value = wv ?? def
         self.defaultValue = def

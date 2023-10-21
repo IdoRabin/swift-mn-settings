@@ -22,7 +22,8 @@ public typealias AnyMNSettableValue = any MNSettableValue
 
 
 // IMPORTANT: registry:
-fileprivate var mnSettings_registry : [String:MNSettings] = [:]
+fileprivate var mnSettings_registry : [String:Weak<MNSettings>] = [:]
+fileprivate var mnSettings_registryLock = MNLock(name: "mnSettings_registry_lock")
 
 public class MNSettings {
     // MARK: Const
@@ -102,11 +103,7 @@ public class MNSettings {
     static var standard : MNSettings {
         get {
             if _standard == nil {
-                do {
-                    _standard = try MNSettings(named: Self.DEFAULT_MNSETTINGS_NAME, persistors: [MNUserDefaultsPersistor.standard])
-                } catch let error {
-                    dlog?.raisePreconditionFailure("MNSettings.{standard} MNSettings was not created: error: \(error.description)")
-                }
+                _standard = MNSettings(named: Self.DEFAULT_MNSETTINGS_NAME, persistors: [MNUserDefaultsPersistor.standard])
             }
             
             return _standard!
@@ -114,17 +111,24 @@ public class MNSettings {
     }
     
     // MARK: Lifecycle
-    public init(named name:String, persistors: [any MNSettingsPersistor] = DEFAULT_PERSISTORS, defaultsProvider:(any MNSettingsProvider)? = nil) throws {
+    public init(named name:String, persistors: [any MNSettingsPersistor] = DEFAULT_PERSISTORS, defaultsProvider:(any MNSettingsProvider)? = nil) {
         guard name.count > 0 else {
-            throw MNError(code:.misc_bad_input, reason: "MNSettings.init(...) name should be at least one charachter")
+            let err = MNError(code:.misc_bad_input, reason: "MNSettings.init(...) name should be at least one charachter")
+            preconditionFailure(err.description)
         }
         
-        let instanceNames = mnSettings_registry.keysArray
+        var instanceNames : [String] = []
+        mnSettings_registryLock.withLock {
+            instanceNames = mnSettings_registry.keysArray
+        }
+
         guard !instanceNames.contains(elementEqualTo: name) else {
-            throw MNError(code:.misc_bad_input, reason: "MNSettings.init(...) named {\(name)} is already in use!")
+            let err = MNError(code:.misc_bad_input, reason: "MNSettings.init(...) named {\(name)} is already in use!")
+            preconditionFailure(err.description)
         }
         guard persistors.count > 0 else {
-            throw MNError(code:.misc_bad_input, reason: "MNSettings.init(...) requires at least one persistor/s!")
+            let err = MNError(code:.misc_bad_input, reason: "MNSettings.init(...) requires at least one persistor/s!")
+            preconditionFailure(err.description)
         }
         
         self.bootState = .booting
@@ -134,7 +138,10 @@ public class MNSettings {
         self.changes = []
         self.persistors = persistors
         self.defaultsProvider = defaultsProvider
-        mnSettings_registry[name] = self
+        
+        mnSettings_registryLock.withLock {
+            mnSettings_registry[name] = Weak(value: self)
+        }
         
         let loadStartTime = Date.now
         var allProviders : [any MNSettingsProvider] = self.persistors
@@ -195,6 +202,10 @@ public class MNSettings {
                 attemptWhenLoaded() // when all persistors loaded
             }
         }
+    }
+    
+    deinit {
+        dlog?.info("MNSettings(named:\(name)).deinit")
     }
     
     // MARK: Private
@@ -358,7 +369,18 @@ public class MNSettings {
     
     // MARK: Public
     public static func instance(byName name:String)->MNSettings? {
-        return mnSettings_registry[name]
+        var result : MNSettings? = nil
+        mnSettings_registryLock.withLock {
+            result = mnSettings_registry[name]?.value
+        }
+        return result
+    }
+    public static func updateRegistry() {
+        mnSettings_registryLock.withLock {
+            mnSettings_registry = mnSettings_registry.compactMapValues({ aweak in
+                return (aweak.value != nil) ? aweak : nil
+            })
+        }
     }
     
     public var isEmpty : Bool {
