@@ -21,8 +21,8 @@ let package = Package(
         // In-House pakcages
 //        .package(url: "https://gitlab.com/ido_r_demos/DSLogger.git", from:"0.0.1"),
 //        .package(url: "https://gitlab.com/ido_r_demos/MNUtils.git", from:"0.0.2"),
-        .package(path: "../MNUtils/MNUtils"),
-        .package(path: "../DSLogger/"),
+        .package(path: "../../MNUtils/MNUtils"),
+        .package(path: "../../DSLogger/"),
     ],
     targets: [
         // Targets are the basic building blocks of a package. A target can define a module or a test suite.

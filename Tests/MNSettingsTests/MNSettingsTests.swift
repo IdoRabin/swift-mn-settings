@@ -23,17 +23,11 @@ final class MNSettingsTests: XCTestCase {
     
     override func setUp() {
         MNUtils.debug.IS_DEBUG = true
-        do {
-            let persistors : [MNSettingsPersistor] = [
-                MNLocalJSONPersistor(name: "testSettings"),
-                MNUserDefaultsPersistor(.standard)
-            ]
-            settings = try MNSettings(named: "testSettings", persistors: persistors)
-        } catch let error {
-            let msg = "MNSettings init failed: \(error.description)"
-            dlog?.warning(msg)
-            XCTFail(msg)
-        }
+        let persistors : [MNSettingsPersistor] = [
+            MNLocalJSONPersistor(name: "testSettings"),
+            MNUserDefaultsPersistor(.standard)
+        ]
+        settings = MNSettings(named: "testSettings", persistors: persistors)
         stats = AppStats(settings: settings)
     }
     
