@@ -9,34 +9,67 @@ import Foundation
 import DSLogger
 import MNUtils
 
-fileprivate let dlog : DSLogger? = DLog.forClass("MNUserDefaultsPersistor")?.setting(verbose: false)
+fileprivate let dlog : DSLogger? = DLog.forClass("MNUserDefaultsPersistor")?.setting(verbose: true)
 
 // DO NOT: MNSettingSaveLoadable
 
 public class MNUserDefaultsPersistor : MNSettingsPersistor {
-
-    weak private var _instance : UserDefaults?
+    static let DEBUG_CLEAR_ALL = MNUtils.debug.IS_DEBUG && false
     
+    weak private var _udInstance : UserDefaults?
+    weak public var defaultsInstance : UserDefaults? {
+        get {
+            return _udInstance
+        }
+    }
     // Most commonly use init(.standard) to reference UserDefaults.standard
-    init(_ instance: UserDefaults) {
-        _instance = instance
+    init(_ instance: UserDefaults, keyPrefix:String = KEY_PREFIX) {
+        self._udInstance = instance
+        self.debugClearAllIfNeeded() // only in Debug mode and flag is on
+        self.keyPrefix = keyPrefix
     }
     
     static var standard : MNUserDefaultsPersistor = MNUserDefaultsPersistor.init(.standard)
-
+    static let KEY_PREFIX : String = "MN."
+    public var keyPrefix = "MN."
+    
     // MARK: MNSettingsPersistor
+    fileprivate func prefixKey(_ key:String)->String {
+        var result = key
+        if !result.hasPrefix(keyPrefix) {
+            result = self.keyPrefix + MNSettings.sanitizeString(key)
+        }
+        return result
+    }
+    
+    func debugClearAllIfNeeded() {
+        guard Self.DEBUG_CLEAR_ALL else {
+            return
+        }
+        dlog?.note("clearAllIfNeeded (clearing all settings)")
+        
+        if let dict = _udInstance?.dictionaryRepresentation() {
+            for (k, _) in dict {
+                if k.hasPrefix(self.keyPrefix) {
+                    _udInstance?.removeObject(forKey: k)
+                }
+            }
+        }
+    }
+    
     public func setValue<V:MNSettableValue>(_ value:V, forKey key:String) throws {
-        guard let instance = _instance else {
+        guard let instance = _udInstance else {
             let msg = "setValue \(value) forKey: \(key). \"instance\" does not exist!"
             dlog?.note(msg)
             throw MNError(code: .misc_failed_updating, reason: msg)
         }
 
-        instance.setValue(value, forKey: key)
+        let prfxKey = self.prefixKey(key)
+        instance.setValue(value, forKey: prfxKey)
     }
 
     public func setValuesForKeys(dict: [MNSKey : AnyMNSettableValue]) throws {
-        guard let instance = _instance else {
+        guard let instance = _udInstance else {
             let msg = "setValuesForKeys \(dict.keys.descriptionJoined). \"instance\" does not exist!"
             dlog?.note(msg)
             throw MNError(code: .misc_failed_updating, reason: msg)
@@ -44,22 +77,29 @@ public class MNUserDefaultsPersistor : MNSettingsPersistor {
 
         dlog?.verbose(">>[5]a    setValuesForKeys: \(dict)")
         for (key, val) in dict {
-            instance.setValue(val, forKey: key)
+            let prfxKey = self.prefixKey(key)
+            instance.setValue(val, forKey: prfxKey)
         }
     }
 
     public func setAllValuesForKeys(dict: [MNSKey : AnyMNSettableValue]) async throws {
-        let keys = _instance?.dictionaryRepresentation().keysArray
-        let keysToRemove = keys?.removing(objects: dict.keysArray)
+        let keys = _udInstance?.dictionaryRepresentation().keysArray
+        
+        // Remove keys belonging to the persistor:
+        let keysToRemove = keys?.removing(objects: dict.keysArray.filter({ key in
+            key.hasPrefix(self.keyPrefix)
+        }))
         for k in keysToRemove ?? [] {
-            _instance?.setNilValueForKey(k)
+            _udInstance?.setNilValueForKey(k)
         }
+        
         try self.setValuesForKeys(dict: dict)
     }
     
     public func fetchValues<V>(forKeys keys: [MNSKey]) async throws -> [MNSKey : V]? where V : CustomStringConvertible, V : Decodable, V : Encodable, V : Hashable {
         var result : [MNSKey : V] = [:]
-        for (k, v) in _instance?.dictionaryWithValues(forKeys: keys) ?? [:] {
+        let prfKeys = keys.map { self.prefixKey($0) }
+        for (k, v) in _udInstance?.dictionaryWithValues(forKeys: prfKeys) ?? [:] {
             let key = (k as MNSKey)
             if let value = v as? V {
                 result[key] = value
@@ -69,12 +109,12 @@ public class MNUserDefaultsPersistor : MNSettingsPersistor {
     }
     
     public func fetchValue<V:MNSettableValue>(forKey key:MNSKey) async throws -> V? {
-        guard let instance = _instance else {
+        guard let instance = _udInstance else {
             dlog?.note("value forKey: \(key). instance does not exist!")
             return nil
         }
 
-        return instance.value(forKey: key) as? V
+        return instance.value(forKey: self.prefixKey(key)) as? V
     }
 
     public func keyWasChanged(from fromKey: MNSKey,
@@ -82,13 +122,16 @@ public class MNUserDefaultsPersistor : MNSettingsPersistor {
                               value: AnyMNSettableValue,
                               context: String,
                               caller:Any?) {
-        guard let instance = _instance else {
+        guard let instance = _udInstance else {
             dlog?.note("keyWasChanged forKey: \(fromKey) => \(toKey) instance does not exist! (\(context))")
             return
         }
-
-        instance.setValue(nil, forKey: fromKey)
-        instance.setValue(value, forKey: toKey)
+        guard fromKey != toKey else {
+            return
+        }
+        
+        instance.setValue(nil, forKey: self.prefixKey(fromKey))
+        instance.setValue(value, forKey: self.prefixKey(toKey))
         dlog?.verbose("keyWasChanged from: \(fromKey) to: \(toKey) (\(context))")
     }
 
@@ -97,18 +140,19 @@ public class MNUserDefaultsPersistor : MNSettingsPersistor {
                                 to toValue: AnyMNSettableValue,
                                 context: String,
                                 caller:Any?) {
-        guard let instance = _instance else {
+        guard let instance = _udInstance else {
             dlog?.note("valueWasChanged  from: \(fromValue) to: \(toValue)  \(key) instance does not exist! (\(context))")
             return
         }
 
-        let prev = instance.value(forKey: key) as? AnyHashable
+        let prefKey = self.prefixKey(key)
+        let prev = instance.value(forKey: prefKey) as? AnyHashable
         if prev?.hashValue != fromValue.hashValue {
-            instance.setValue(toValue, forKey: key)
+            instance.setValue(toValue, forKey: prefKey)
         } else if prev?.hashValue != toValue.hashValue {
             dlog?.verbose(log: .fail, "\(Self.self) valueWasChanged for key: \(key) did not need to change value - new value was already set! \(toValue)")
         } else {
-            instance.setValue(toValue, forKey: key)
+            instance.setValue(toValue, forKey: prefKey)
         }
 
 

@@ -23,7 +23,7 @@ enum PreRelease: String {
 let MNSETTINGS_NAME_STR : String = "MNSettings"
 
 // String fields allow only alphanumerics and a hyphen (-)
-let MNSETTINGS_BUILD_NR : Int = 4
+let MNSETTINGS_BUILD_NR : Int = 20
 let MNSETTINGS_BUILD_VERSION = MNSemver (
     major: 0,
     minor: 1,

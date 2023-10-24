@@ -31,6 +31,10 @@ public protocol MNSettingSaveLoadable {
 /// Implementors should be able to perform fetch / put operations for key/value pairs into / from a source
 public protocol MNSettingsPersistor : MNSettingsProvider {
     
+    
+    /// Returns the type name of this persistor, i.e "\(type(of:self))"
+    var typeName : String { get }
+    
     /// Set a single value for a given key into the persistance implementor, overwriting an existing (if exists) previous value for that key.
     /// - Parameters:
     ///   - value: value to save
@@ -68,4 +72,19 @@ public protocol MNSettingsPersistor : MNSettingsProvider {
     ///   - context: string describing the context of the operation (for debugging mostly)
     ///   - caller: the calling class / body / person / authority info.
     func valueWasChanged(key: MNSKey, from fromValue: AnyMNSettableValue, to toValue:AnyMNSettableValue, context:String, caller:Any?)
+}
+
+public extension MNSettingsPersistor {
+    /// Returns the type name of this persistor, i.e "\(Self.self)"
+    var typeName : String {
+        return "\(Self.self)"
+    }
+}
+
+public extension Array where Element == MNSettingsPersistor {
+    var typeNames : [String] {
+        return self.map { elem in
+            elem.typeName
+        }.sorted().uniqueElements()
+    }
 }

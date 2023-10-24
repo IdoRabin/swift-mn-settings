@@ -28,7 +28,7 @@ final class MNSettingsTests: XCTestCase {
             MNUserDefaultsPersistor(.standard)
         ]
         settings = MNSettings(named: "testSettings", persistors: persistors)
-        stats = AppStats(settings: settings)
+        stats = AppStats()// settings: settings)
     }
     
     override func tearDown() {

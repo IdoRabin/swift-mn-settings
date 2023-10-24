@@ -13,8 +13,12 @@ import MNUtils
 import Vapor
 #endif
 
-fileprivate let dlog : DSLogger? = DLog.forClass("MNSettingsCategory")?.setting(verbose: false)
+fileprivate let dlog : DSLogger? = DLog.forClass("MNSettingsCategory")?.setting(verbose: true)
 
+protocol MNSettingsCategoryRegistrable {
+    func registerSettableProperties(isBoot:Bool)
+    func registerCategories(isBoot:Bool)
+}
 
 /// A settings category - may contain other settings categories (nesting). It is intended to contain MNSettable property wrappers. Will registers and validate all names/keys of all MNettable properties:
 ///
@@ -24,11 +28,17 @@ open class MNSettingsCategory { // : CustomDebugStringConvertible
     public static let MAX_NESTING_LEVEL = 6
     
     // MARK: Properties / members
-    private (set) public weak var settings : MNSettings? = nil
-    private (set) var categoryName : MNSCategoryName = "?"
-    private (set) var nestingLevel : Int = 0
-    private (set) var subSettings : [Weak<MNSettingsCategory>]? = nil
-    private (set) public weak var parent : MNSettingsCategory? = nil
+    internal (set) public weak var settings : MNSettings? = nil
+    var categoryName : MNSCategoryName = "?" {
+        didSet {
+            if self.categoryName.contains("AppPrefillData") {
+                dlog?.info("categoryName AppPrefillData!")
+            }
+        }
+    }
+    var nestingLevel : Int = 0
+    var subSettings : [Weak<MNSettingsCategory>]? = nil
+    internal (set) public weak var parent : MNSettingsCategory? = nil
     
     // MARK: Lifecycle
     public init(settings:MNSettings? = MNSettings.standard, customName:String? = nil) {
@@ -46,12 +56,21 @@ open class MNSettingsCategory { // : CustomDebugStringConvertible
         self.categoryName = customName ?? MNSettings.sanitizeString("\(Self.self)")
         self.settings = settings
         // will check if self is not a child of other category and register the categories into the tree.
-        self.registerCategories(isBoot: true)
         MNExec.exec(afterDelay: 0.01) {[self] in
+            self.registerCategories(isBoot: false)
             self.validateCaterogyTree(isLog: dlog?.isVerboseActive ?? false)
             // After all registerCategories of all Categories/Classes is done (whereby each category inherits the correct settings instance)
             // We register the actual settings / properties in each category to the correct settings
             self.registerSettableProperties(isBoot: true)
+        }
+    }
+    
+    public convenience init(settingsNamed:String, customName:String? = nil) {
+        dlog?.info("init(settingsNamed:\(settingsNamed) customName:\(customName.descOrNil) Thread.isMain: \(MNExec.isMain)")
+        if let settings = MNSettings.instance(byName: settingsNamed) {
+            self.init(settings: settings, customName: customName)
+        } else {
+            self.init(customName:customName)
         }
     }
     
@@ -60,7 +79,7 @@ open class MNSettingsCategory { // : CustomDebugStringConvertible
     }
     
     // MARK: Private
-    private func invalidateCategoryName() {
+    internal func invalidateCategoryName() {
         var str = self.parentCategoryNames.joined(separator: MNSettings.CATEGORY_DELIMITER) //  + "\(Self.self)"
         str = MNSettings.sanitizeString(str)
         if categoryName != str {
@@ -74,54 +93,6 @@ open class MNSettingsCategory { // : CustomDebugStringConvertible
         self.subSettings = self.subSettings?.filter({ weak in
             weak.value != nil
         })
-    }
-    
-    private func registerCategories(isBoot:Bool, depth:Int = 0) {
-
-        guard self.subSettings == nil else {
-            return
-        }
-        
-        guard depth <= Self.MAX_NESTING_LEVEL else {
-            dlog?.warning("registerCategories \(Self.self) encountered nesting level > \(Self.MAX_NESTING_LEVEL) (MAX_NESTING_LEVEL)")
-            return
-        }
-
-        self.nestingLevel = depth
-        let refChildren = Mirror(reflecting: self).children
-        self.subSettings = refChildren.compactMap({ label, value in
-            if let val = value as? MNSettingsCategory {
-                val.parent = self
-                val.nestingLevel = depth + 1
-                val.invalidateCategoryName()
-                if let sett = self.settings {
-                    dlog?.success("changing settings for: [\(val.categoryName)] to: [\(sett.name)]")
-                    val.settings = sett
-                    sett.registerCategory(val)
-                }
-                
-                return Weak(value: val)
-            }
-            return nil
-        })
-        
-        dlog?.verbose(log:.success, "\(self.debugDescription) registerCategories (found: \(self.subSettings?.count ?? 0) FOR DEPTH: \(depth + 1))")
-        for sub in subSettings ?? [] {
-            if let sub = sub.value {
-                sub.registerCategories(isBoot:isBoot, depth: depth + 1)
-            }
-        }
-        
-        // Register:
-        MNExec.exec(afterDelay: 0.0) {[self, settings] in
-            dlog?.verbose("\(self.debugDescription) nl:\(self.nestingLevel) Will register into setting: \(settings?.name ?? "<nil>")")
-            if self.nestingLevel == 0 {
-                self.recourseDownTree { cat in
-                    cat.settings = self.settings
-                }
-                settings?.registerCategory(self)
-            }
-        }
     }
     
     // MARK: Public
@@ -273,54 +244,6 @@ open class MNSettingsCategory { // : CustomDebugStringConvertible
                 if isLog && MNUtils.debug.IS_DEBUG == true && dlog?.isVerboseActive ?? false {
                     dlog?.info("validateCaterogyTree: \(tab) [\(cat.categoryName)] level:\(cat.nestingLevel) settings: [\(cat.settings?.name ?? "<nil>" )] parent: [\(cat.parent?.categoryName ?? "<nil>" )]")
                 }
-            }
-        }
-    }
-    
-    private func validatePropertyKey() {
-        
-    }
-    
-    public func registerSettableProperties(isBoot:Bool = false) {
-        
-        // Validate the settings are ok downtree: JIC
-        let root = self.rootCategory
-        guard let settings = root.settings else {
-            dlog?.warning(" registerSettableProperties category: [\(root.categoryName)] cannot occur without a settings (currently <nil>)")
-            return
-        }
-        dlog?.verbose("\(root.debugDescription) will registerSettableProperties in \(settings.name)")
-        
-        // We are assuming at this stage that the nestingLevel is set correctly for all categories in the tree:
-        root.recourseDownTree { cat in
-            let context = (isBoot ? (MNSettings.BOOT_CONTEXT_SUBSTR + " ") : "") + cat.debugDescription + " validateKeys"
-            let tab = "  ".repeated(times: cat.nestingLevel)
-            // let delim = MNSettings.CATEGORY_DELIMITER
-            cat.invalidateCategoryName()
-            
-            let refChildren : [any MNSettabled] = Mirror(reflecting: cat).children.compactMap { item in
-                return item.value as? any MNSettabled
-            }
-            dlog?.verbose(tab + "registerSettableProperties in cat: \(tab) [\(cat.categoryName)] has: \(refChildren.count) mirrored child/ren")
-          
-            // Set child MNSettables to correct keys:
-            for refChild in refChildren {
-                if refChild.settings != settings {
-                    // Set the "settings" instance of the property to the
-                    // Will also set observing corretly in the settings and more.
-                    refChild.setMNSettings(settings, context: context)
-                }
-                
-                let expectedKeyPrefix = cat.parentCategoryNames.joined(separator: MNSettings.CATEGORY_DELIMITER)
-                if !refChild.key.contains(expectedKeyPrefix) {
-                    let newKey = expectedKeyPrefix + MNSettings.CATEGORY_DELIMITER + refChild.key
-                    do {
-                        try refChild.setKey(newKey, context: context)
-                    } catch let error {
-                        dlog?.note(tab + "validateKeysInCategory failed setKey: \"\(newKey)\" error: \(error.description)")
-                    }
-                }
-                
             }
         }
     }
