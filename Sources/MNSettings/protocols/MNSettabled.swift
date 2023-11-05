@@ -22,6 +22,7 @@ protocol MNSettabled : Equatable {
     func setDefaultValue(_ newDefaultValue:AnyMNSettableValue) throws
     func getValue(forKey:MNSKey) throws -> ValType
     func setKey(_ newValue:String, context:String) throws
+    func fillLoadedValueFromPersistors() async throws // for after loading
     
     // NOTE: we use a setter function with an exotic name instead of a var, so that this operation will be well thought of - it has important consequences
     func setMNSettings(_ newValue:MNSettings, context:String)

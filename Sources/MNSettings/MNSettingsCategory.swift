@@ -13,7 +13,7 @@ import MNUtils
 import Vapor
 #endif
 
-fileprivate let dlog : DSLogger? = DLog.forClass("MNSettingsCategory")?.setting(verbose: true)
+fileprivate let dlog : DSLogger? = DLog.forClass("MNSettingsCategory")?.setting(verbose: false)
 
 protocol MNSettingsCategoryRegistrable {
     func registerSettableProperties(isBoot:Bool)
@@ -37,27 +37,29 @@ open class MNSettingsCategory { // : CustomDebugStringConvertible
         }
     }
     var nestingLevel : Int = 0
-    var subSettings : [Weak<MNSettingsCategory>]? = nil
+    var subCategories : [Weak<MNSettingsCategory>]? = nil
     internal (set) public weak var parent : MNSettingsCategory? = nil
     
     // MARK: Lifecycle
-    public init(settings:MNSettings? = MNSettings.standard, customName:String? = nil) {
+    public init(settings:MNSettings? = MNSettings.implicit ?? MNSettings.standard, customName:String? = nil) {
         var custmName = customName
-        if let custmName = custmName {
-            if custmName.count < 2 {
-                dlog?.warning("MNSettingsCategory(settings:customName:) customName [\(custmName)] is too small!")
+        if let cstName = custmName {
+            custmName = MNSettings.sanitizeString(cstName)
+            if cstName.count < 2 {
+                dlog?.warning("MNSettingsCategory(settings:customName:) customName [\(cstName)] is too small!")
+            }
+            if cstName == MNSettings.OTHER_CATERGORY_NAME && "\(type(of: self))" != MNSettings.OTHER_CATERGORY_CLASS_NAME {
+                custmName = MNSettings.OTHER_CATERGORY_NAME.trimmingCharacters(in: .punctuationCharacters) + "\(Date.now.timeIntervalSince1970)"
+                dlog?.warning("MNSettingsCategory(settings:customName:) customName [\(MNSettings.OTHER_CATERGORY_NAME)] is a reserved name! -- all MNSettables / values / keys will be registered inside the internal (existing) \"other\" category instance!")
             }
         }
-        if custmName == MNSettings.OTHER_CATERGORY_NAME && "\(type(of: self))" != MNSettings.OTHER_CATERGORY_CLASS_NAME {
-            custmName = MNSettings.OTHER_CATERGORY_NAME.trimmingCharacters(in: .punctuationCharacters) + "\(Date.now.timeIntervalSince1970)"
-            dlog?.warning("MNSettingsCategory(settings:customName:) customName [\(MNSettings.OTHER_CATERGORY_NAME)] is a reserved name! -- all MNSettables / values / keys will be registered inside the internal (existing) \"other\" category instance!")
-        }
         
+        dlog?.verbose("init(settingsNamed: \(settings?.name ?? "<unknown>") customName: \(customName.descOrNil)")
         self.categoryName = customName ?? MNSettings.sanitizeString("\(Self.self)")
         self.settings = settings
         // will check if self is not a child of other category and register the categories into the tree.
         MNExec.exec(afterDelay: 0.01) {[self] in
-            self.registerCategories(isBoot: false)
+            
             self.validateCaterogyTree(isLog: dlog?.isVerboseActive ?? false)
             // After all registerCategories of all Categories/Classes is done (whereby each category inherits the correct settings instance)
             // We register the actual settings / properties in each category to the correct settings
@@ -66,7 +68,6 @@ open class MNSettingsCategory { // : CustomDebugStringConvertible
     }
     
     public convenience init(settingsNamed:String, customName:String? = nil) {
-        dlog?.info("init(settingsNamed:\(settingsNamed) customName:\(customName.descOrNil) Thread.isMain: \(MNExec.isMain)")
         if let settings = MNSettings.instance(byName: settingsNamed) {
             self.init(settings: settings, customName: customName)
         } else {
@@ -90,7 +91,7 @@ open class MNSettingsCategory { // : CustomDebugStringConvertible
     }
     
     private func invalidateSubsettings() {
-        self.subSettings = self.subSettings?.filter({ weak in
+        self.subCategories = self.subCategories?.filter({ weak in
             weak.value != nil
         })
     }
@@ -151,8 +152,8 @@ open class MNSettingsCategory { // : CustomDebugStringConvertible
         // clean Subsettings from weak elements that were released:
         self.invalidateSubsettings()
         
-        if let subSettings = self.subSettings, subSettings.count > 0 {
-            for weak in subSettings {
+        if let subCategories = self.subCategories, subCategories.count > 0 {
+            for weak in subCategories {
                 if let sub = weak.value {
                     sub.recourseDownTree(block, depth: depth + 1)
                 }
@@ -197,7 +198,7 @@ open class MNSettingsCategory { // : CustomDebugStringConvertible
     }
     
     var isLeafCategory : Bool {
-        return (self.subSettings?.count ?? 0) == 0
+        return (self.subCategories?.count ?? 0) == 0
     }
     
     var isBranchCategory : Bool {
@@ -223,14 +224,14 @@ open class MNSettingsCategory { // : CustomDebugStringConvertible
         
         self.recourseDownTree { cat in
             let tab = "  ".repeated(times: depth)
-            let cnt =  cat.subSettings?.count ?? 0
+            let cnt =  cat.subCategories?.count ?? 0
             let sign = (cnt > 0 || cat.nestingLevel == 0) ? "+ " : ("  - ")
             dlog?.info(tab + sign + cat.debugDescription + " has \(cnt) sub-categories.")
         }
     }
 
     public func validateCaterogyTree(isLog:Bool) {
-        if self.nestingLevel == 0, self.subSettings?.count ?? 0 > 0, self.parent == nil {
+        if self.nestingLevel == 0, self.subCategories?.count ?? 0 > 0, self.parent == nil {
             self.recourseDownTree { cat in
                 let tab = "   ".repeated(times: cat.nestingLevel)
                 if let parent = cat.parent, parent.settings != cat.settings {

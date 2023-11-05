@@ -9,12 +9,15 @@ import Foundation
 import DSLogger
 import MNUtils
 
-fileprivate let dlog : DSLogger? = DLog.forClass("MNUserDefaultsPersistor")?.setting(verbose: true)
+fileprivate let dlog : DSLogger? = DLog.forClass("MNUserDefaultsPersistor")?.setting(verbose: false)
 
 // DO NOT: MNSettingSaveLoadable
 
+
+
 public class MNUserDefaultsPersistor : MNSettingsPersistor {
     static let DEBUG_CLEAR_ALL = MNUtils.debug.IS_DEBUG && false
+    public static let MNUserDefaultsPersistor_Default_KEY_PREFIX : String = "MN."
     
     weak private var _udInstance : UserDefaults?
     weak public var defaultsInstance : UserDefaults? {
@@ -23,15 +26,14 @@ public class MNUserDefaultsPersistor : MNSettingsPersistor {
         }
     }
     // Most commonly use init(.standard) to reference UserDefaults.standard
-    init(_ instance: UserDefaults, keyPrefix:String = KEY_PREFIX) {
+    public init(_ instance: UserDefaults = .standard, keyPrefix:String = MNUserDefaultsPersistor_Default_KEY_PREFIX) {
         self._udInstance = instance
         self.debugClearAllIfNeeded() // only in Debug mode and flag is on
         self.keyPrefix = keyPrefix
     }
     
     static var standard : MNUserDefaultsPersistor = MNUserDefaultsPersistor.init(.standard)
-    static let KEY_PREFIX : String = "MN."
-    public var keyPrefix = "MN."
+    public var keyPrefix = MNUserDefaultsPersistor_Default_KEY_PREFIX
     
     // MARK: MNSettingsPersistor
     fileprivate func prefixKey(_ key:String)->String {

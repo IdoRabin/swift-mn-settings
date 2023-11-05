@@ -9,8 +9,7 @@ import Foundation
 import DSLogger
 import MNUtils
 
-fileprivate let dlog : DSLogger? = DLog.forClass("MNSettable_")?.setting(verbose: true)
-fileprivate let dlogRegistry : DSLogger? = DLog.forClass("MNSettable_REG")
+fileprivate let dlog : DSLogger? = DLog.forClass("MNSettable_")?.setting(verbose: false)
 
 public typealias MNSCategoryName = String
 public typealias MNSKey = String
@@ -48,7 +47,7 @@ public final class MNSettable<ValueType : MNSettableValue> : Codable {
         }
     }
     
-    internal (set) public weak var settings : MNSettings? = MNSettings.standard {
+    internal (set) public weak var settings : MNSettings? = MNSettings.implicit {
         didSet {
             if let old = oldValue, old != settings {
                 // Unregister from previous settings instance
@@ -62,7 +61,7 @@ public final class MNSettable<ValueType : MNSettableValue> : Codable {
     
     // MARK: Lifecycle
     public init(wrappedValue wv:ValueType? = nil, key:MNSKey, `default` def:ValueType, settings:MNSettings? = nil) {
-        let fsettings = settings ?? MNSettings.standard
+        let fsettings = settings ?? MNSettings.implicit ?? MNSettings.standard
         let sanitizedKey = fsettings.sanitizeKey(key)
         self.lock.changeName(to: "\(MNSettable.self).\(sanitizedKey)")
         self._value = wv ?? def
@@ -77,7 +76,7 @@ public final class MNSettable<ValueType : MNSettableValue> : Codable {
         self.lock.changeName(to: "\(MNSettable.self).\(key)")
         self._value = wv ?? def
         self.defaultValue = def
-        let fsettings = settings ?? MNSettings.standard
+        let fsettings = settings ?? MNSettings.implicit ?? MNSettings.standard
         let sanitizedKey = fsettings.sanitizeKey(key)
         self.settings = fsettings
         self.key = sanitizedKey
@@ -98,8 +97,9 @@ public final class MNSettable<ValueType : MNSettableValue> : Codable {
                     
                     // Move to new settings:
                     self.setMNSettings(asettings, context: "MNSettable.init(forSettingsNamed:)...whenLoaded(...\(settingsName)")
-                    asettings.registerSettable(self)
-                    asettings.registerObserver(self)
+                    if asettings.registerSettable(self) {
+                        asettings.registerObserver(self)
+                    }
                     return true // should remove from further whenLoaded calls
                 }
                 return false
@@ -137,8 +137,9 @@ public final class MNSettable<ValueType : MNSettableValue> : Codable {
             if let instance = MNSettings.instance(byName: settingsName) {
                 self.settings = instance
             } else {
-                dlog?.note("init(from decoder:) did not find instance for settingsName: \(settingsName). using .standard")
-                self.settings = MNSettings.standard
+                let name = MNSettings.implicit?.name ?? MNSettings.standard.name
+                dlog?.note("init(from decoder:) did not find instance for settingsName: \(settingsName). using. Using \(name)")
+                self.settings = MNSettings.implicit
             }
         }
         
@@ -165,11 +166,18 @@ public final class MNSettable<ValueType : MNSettableValue> : Codable {
     }
     
     func categoryName(forKey key : MNSKey, delimiter:String = MNSettings.CATEGORY_DELIMITER)->MNSCategoryName? {
-        return (self.settings ?? MNSettings.standard).categoryName(forKey: key, delimiter: delimiter)
+        return (self.settings ?? MNSettings.implicit ?? MNSettings.standard).categoryName(forKey: key, delimiter: delimiter)
     }
     
-    func fetchValueFromPersistors() async throws ->ValueType? {
-        return try await settings?.fetchValueFromPersistors(forKey: self.key)
+    func fillLoadedValueFromPersistors() async throws {
+        guard let settings = self.settings else {
+            return
+        }
+        
+        if let val : ValueType = try await settings.fetchValueFromPersistors(forKey: self.key) {
+            dlog?.verbose(">>> fillLoadedValueFromPersistors \(val) : \(ValueType.self)")
+            try settings.setValue(val, forKey: self.key)
+        }
     }
 }
 
@@ -199,19 +207,21 @@ extension MNSettable : MNSettabled {
         }
         
         // dlog?.info("\(self.key) will registerObserver in: \((settings?.name).descOrNil)")
-        let stt = (settings ?? MNSettings.standard)
+        let stt = (settings ?? MNSettings.implicit ?? MNSettings.standard)
         stt.registerObserver(self)
         MNExec.exec(afterDelay: 0.03) {[self, stt] in
             if let curStt = self.settings {
                 if stt.name == curStt.name {
-                    stt.registerSettable(self)
+                    _ = curStt.registerSettable(self)
                 } else {
                     stt.unregisterSettable(self)
                     stt.unregisterValue(forKey: self.key)
                     stt.unregisterObserver(self)
                     
                     // Try to register again?
-                    curStt.registerSettable(self)
+                    if curStt.registerSettable(self) {
+                        curStt.registerObserver(self)
+                    }
                 }
             }
         }

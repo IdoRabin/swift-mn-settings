@@ -15,6 +15,7 @@ fileprivate let dlog : DSLogger? = DLog.forClass("MNSettingsPersistor")?.setting
 /// Alllows saving / loading operations for a MNSettings provider / implementor
 public protocol MNSettingSaveLoadable {
     // Load / save
+    var url : URL? { get }
     
     /// Load all the Key / Values using the persistance implementation
     /// - Parameter info: context, settings or instructions to the implementor on how to load

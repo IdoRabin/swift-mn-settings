@@ -19,7 +19,7 @@ public class MNLocalJSONPersistor : MNSettingsPersistor {
 
     let cache = MNAutoSavedCache<String, String>(name: "MNLocalJSONPersistor", maxSize: 5000, attemptLoad: .nextRunloop)
     
-    init(name:String = "", filepath:URL? = nil) {
+    public init(name:String = "", filepath:URL? = nil) {
         if name.count > 0 && name != "\(Self.self)" {
             cache.name = "MNLocalJSONPersistor_\(name)"
             cache.observers.add(observer: self)
@@ -55,15 +55,15 @@ public class MNLocalJSONPersistor : MNSettingsPersistor {
             let decoder = decoder ?? JSONDecoder()
             var procc = [
                 {
-                    if let data = string.data(using: .utf16) {
-                        result = try decoder.decode(Value.self, from: data)
-                        method_4debug = "utf16.decode(\(Value.self))"
-                    }
-                },
-                {
                     if let data = Data(base64Encoded: string, options: .ignoreUnknownCharacters) {
                         result = try decoder.decode(Value.self, from: data)
                         method_4debug = "base64Encoded.decode(\(Value.self))"
+                    }
+                },
+                {
+                    if let data = string.data(using: .utf16) {
+                        result = try decoder.decode(Value.self, from: data)
+                        method_4debug = "utf16.decode(\(Value.self))"
                     }
                 }
                 // TODO: see if needed: UnkeyedDecodingUtil.decode
@@ -223,6 +223,10 @@ public class MNLocalJSONPersistor : MNSettingsPersistor {
 }
 
 extension MNLocalJSONPersistor : MNSettingSaveLoadable {
+    public var url: URL? {
+        return cache.filePath(forKeysOnlyCache: false)
+    }
+    
     public func load(info: StringAnyDictionary?) async throws -> Int {
 
         if let err = await cache.whenLoadedAsync() {

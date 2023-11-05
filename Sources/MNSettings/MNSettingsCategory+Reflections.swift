@@ -9,7 +9,7 @@ import Foundation
 import DSLogger
 import MNUtils
 
-fileprivate let dlog : DSLogger? = DLog.forClass("MNSettingsCategory+Reg")?.setting(verbose: true)
+fileprivate let dlog : DSLogger? = DLog.forClass("MNSettingsCategory+Reg")?.setting(verbose: false)
 
 extension MNSettingsCategory : MNSettingsCategoryRegistrable /* reflections */ {
     
@@ -22,7 +22,7 @@ extension MNSettingsCategory : MNSettingsCategoryRegistrable /* reflections */ {
             dlog?.verbose("\(self.fullPath) registerCategories START")
         }
         
-        guard self.subSettings == nil else {
+        guard self.subCategories == nil else {
             return
         }
         
@@ -33,7 +33,7 @@ extension MNSettingsCategory : MNSettingsCategoryRegistrable /* reflections */ {
 
         self.nestingLevel = depth
         let refChildren = Mirror(reflecting: self).children
-        self.subSettings = refChildren.compactMap({ label, value in
+        self.subCategories = refChildren.compactMap({ label, value in
             if let val = value as? MNSettingsCategory {
                 val.parent = self
                 val.nestingLevel = depth + 1
@@ -49,8 +49,8 @@ extension MNSettingsCategory : MNSettingsCategoryRegistrable /* reflections */ {
             return nil
         })
         
-        dlog?.verbose(log:.success, "\(self.fullPath) registerCategories (found: \(self.subSettings?.count ?? 0) FOR DEPTH: \(depth + 1))")
-        for sub in subSettings ?? [] {
+        dlog?.verbose(log:.success, "\(self.fullPath) registerCategories (found: \(self.subCategories?.count ?? 0) FOR DEPTH: \(depth + 1))")
+        for sub in subCategories ?? [] {
             if let sub = sub.value {
                 sub.registerCategories(isBoot:isBoot, depth: depth + 1)
             }

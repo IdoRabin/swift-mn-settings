@@ -13,7 +13,9 @@ import MNUtils
 import Vapor
 #endif
 
+
 fileprivate let dlog : DSLogger? = DLog.forClass("MNSettings")?.setting(verbose: false)
+// TODO: MNSettings Rewrite the init/registration order for MNSettings and MNSettingsCategoty and MNSettable so that no stupid init with delay timers and etc..
 
 public typealias MNSettableValue = Hashable & Codable & Equatable & CustomStringConvertible
 public typealias AnyMNSettableValue = any MNSettableValue
@@ -66,9 +68,15 @@ open class MNSettings {
         let to : String?
     }
     
+    struct MNSettingsConfig {
+        
+    }
+    
     // MARK: Consts
+    static public let MAX_MNSETTINGS_CHANGES_COUNT = 128
     static public let DEFAULT_PERSISTORS : [any MNSettingsPersistor] = [MNUserDefaultsPersistor.standard]
     static public let DEFAULT_MNSETTINGS_NAME = "__default__"
+    
     static public let OTHER_CATERGORY_NAME = "_other_"
     static public var OTHER_CATERGORY_CLASS_NAME : String {
         return "\(OtherCategory.self)"
@@ -77,17 +85,20 @@ open class MNSettings {
     static public let CATEGORY_DELIMITER = "."
     
     
+    /// When a settable ot category do not have an explicit settings detected, will try to use this settings instance before using the "default" instance
+    static public var IMPLICIT_SETTINGS_NAME : String? = nil
+    
     /// Set to false when you are never using the .standard settings and don't want to waste time on loading it upon init. Set this flag as early as possible in the init process of the program.
     /// NOTE: this means that .standart (__default__) settings will always init empty, and will not persist info
     static public var IS_SHOULD_LOAD_DEFAULT_STD_SETTINGS = true
-    
     
     /// When true, will check every settings key to use only the registered MNSettingsCategory keys as prefixes or use the __other__ category as prefix. When false, does not check category names (faster) and does not prefix with "other" if not part of MNSettingsCategory and has at least one delimiter in the keys' name.
     /// For example: for the @Settable(key:"myCategory.myKey", default...) will "sanitize" its key:
     /// When true:  to "other.myCategory.myKey" and its category will be: "other.myCategory"
     /// When false: to "myCategory.myKey"        and its category will be: "myCategory"
-    static public var IS_SHOULD_USE_ONLY_REG_CATEGORIES = false
+    static public var IS_SHOULD_USE_OTHER_CATEGORY_FOR_ORPHANS = false
     
+    // Debugging config:
     static public let DEBUG_IS_SHOULD_DELAY_LOAD : Bool = MNUtils.debug.IS_DEBUG && false // seconds
     static public let DEBUG_LOAD_DELAY : TimeInterval = 2.0 // seconds
     
@@ -106,7 +117,7 @@ open class MNSettings {
     // MARK: Properties / members
     private (set) var values : [MNSCategoryName:[MNSKey : AnyMNSettableValue]] = [:]
     private (set) public var name: String
-    private (set) var allKeys = Set<String>()
+    private (set) var allKeys = Set<String>() // TODO: fill after init ?
     
     @SkipEncode private var observers : [MNSKey:[AnyMNSettabled]] = [:]
     @SkipEncode private (set) var bulkChangeKey : String? = nil
@@ -119,6 +130,9 @@ open class MNSettings {
     
     // MARK: Singleton-ish
     @SkipEncode static private (set) var _standard : MNSettings? = nil
+    
+    
+    /// The "default" instance, one can look at it as the "singleton" instance for settings.
     public static var standard : MNSettings {
         get {
             if _standard == nil {
@@ -129,8 +143,17 @@ open class MNSettings {
         }
     }
     
+    /// The "fallback" instance - this is the settings instance into which all implicit categories and settables are registered to. NOTE: this can be changed via the IMPLICIT_SETTINGS_NAME.
+    public static var implicit : MNSettings? {
+        if let implicitSttName = IMPLICIT_SETTINGS_NAME, let implicitInstance = self.instance(byName: implicitSttName) {
+            return implicitInstance
+        }
+        return nil
+    }
+    
     // MARK: Lifecycle
     public required init(named name:String, persistors: [any MNSettingsPersistor] = DEFAULT_PERSISTORS, defaultsProvider:(any MNSettingsProvider)? = nil) {
+        dlog?.info("\(Self.self).init name: \(name)")
         guard name.count > 0 else {
             let err = MNError(code:.misc_bad_input, reason: "MNSettings.init(...) name should be at least one charachter")
             preconditionFailure(err.description)
@@ -228,10 +251,11 @@ open class MNSettings {
             allProviders.forEach {[self] pers in
                 if let persistor = pers as? MNSettingSaveLoadable {
                     Task {[persistor, self] in
-                        dlog?.info("[\(name)] loading persistor: \(persistor)")
+                        // dlog?.info("[\(name)] loading persistor: \(persistor)")
                         let count = try await persistor.load(
                             info: ["name":self.name, "class":Self.self])
-                        dlog?.verbose(log: .success, "persistor \(persistor) loaded \(count) items.")
+                        let urlDesc = ".." + (persistor.url?.absoluteString ?? "<nil>")
+                        dlog?.success(" persistor loaded: \(persistor) \(count) items. url: \(urlDesc)")
                         
                         // if not thrown error - persistor.load is done
                         self.lock.withLockVoid {
@@ -241,6 +265,8 @@ open class MNSettings {
                     }
                 } else {
                     // Not loadable / savable:
+                    dlog?.success(" non-loadable persistor ready: \(pers) (does not conform to MNSettingSaveLoadable)")
+                    
                     self.lock.withLockVoid {
                         self.providersLoadedCount += 1
                     }
@@ -257,6 +283,7 @@ open class MNSettings {
     // MARK: Private
     private var categories : [MNSCategoryName:Weak<MNSettingsCategory>] = [:]
     private var otherCategory : OtherCategory?
+    private var otherCategoryItemKeys : Set<MNSKey>? = nil
     
     var wasChanged : Bool {
         return self.lock.withLock {
@@ -264,7 +291,7 @@ open class MNSettings {
         }
     }
     
-    var categoryNames : [String] {
+    var rootCategoryNames : [String] {
         let catNames : [String] = self.categories.keysArray.map { key in
             Self.sanitizeString(key)
         }
@@ -279,6 +306,30 @@ open class MNSettings {
         return self._bulkChangeKey.wrappedValue != nil
     }
     
+    fileprivate func fillLoadedValues() {
+        dlog?.verbose("\(name) fillLoadedValues START")
+        Task {[self] in
+            // self.lock.withLock {[self] in
+                do {
+                    var allKeys : [MNSKey] = []
+                    for (_ /* category */, vals) in self.values {
+                        for val in vals {
+                            let observers = self.observers[val.key] ?? []
+                            for observer in observers {
+                                try await observer.fillLoadedValueFromPersistors()
+                                // self.setValue(observer, forKey: val.key)
+                            }
+                            
+                        }
+                    }
+                    dlog?.verbose(">>> fillLoadedValues END remining keys: \(allKeys.descriptionsJoined)")
+                } catch let error {
+                    dlog?.warning(">>> fillLoadedValues END load failed with error: \(error)")
+                }
+            //}
+        }
+    }
+    
     fileprivate static func notifyLoaded(loadStartTime:Date, settings:MNSettings, depth:Int = 0) {
         let depth = max(0, depth)
         
@@ -291,6 +342,8 @@ open class MNSettings {
             return
         }
         
+        settings.fillLoadedValues()
+        
         if MNUtils.debug.IS_DEBUG && dlog != nil {
             let timeDelta = abs(loadStartTime.timeIntervalSinceNow)
             let timeString = "\(timeDelta.toString(decimal: 3)) sec."
@@ -298,7 +351,7 @@ open class MNSettings {
             
             dlog?.info("load END for \"\(settings.name)\". \(addStr)\(timeString)")
         }
-
+        
         whenLoaded.forEachIndex { index, block in
             if block(settings) {
                 toRemove.append(index)
@@ -335,18 +388,6 @@ open class MNSettings {
     
     func sanitizeKey (_ key:MNSKey)->MNSKey {
         var result = Self.sanitizeString(key)
-        if Self.IS_SHOULD_USE_ONLY_REG_CATEGORIES {
-            let catNames = self.categoryNames
-            
-            if MNUtils.debug.IS_DEBUG && self.name == Self.standard.name &&  self.values.count > 0 {
-                if [1, 2].contains(self.values.count) {
-//                    dlog?.info("\(self.name).unreg issue : \(catNames.descriptionsJoined) vals: \(self.values.count)")
-//                    for (k, v) in self.values {
-//                        dlog?.info("   unreg issue \(self.name). first k/value: k: \"\(k)\" : v: \(v.sortedKeys)")
-//                    }
-                }
-            }
-        }
 
         // For debugging? let category = category(forKey:skey)
         return result
@@ -382,12 +423,23 @@ open class MNSettings {
             return nil
         }
         comps.removeLast()
-        return comps.joined(separator: Self.CATEGORY_DELIMITER) // the actual category
+        return comps.joined(separator: Self.CATEGORY_DELIMITER) // the actual category may be multiple delimiter levels deep.
     }
     
     // MARK: Internal
     public func categoryName(forKey key : MNSKey, delimiter:String = MNSettings.CATEGORY_DELIMITER)->MNSCategoryName? {
-        return Self.categoryName(forKey: key, delimiter: delimiter)
+        
+        var result = Self.categoryName(forKey: key, delimiter: delimiter)
+        
+        // Check if value is orphan: i.e no root category owns this keyed value
+        if Self.IS_SHOULD_USE_OTHER_CATEGORY_FOR_ORPHANS {
+            let rootCategories = self.rootCategoryNames.removing(elementsEqualTo: Self.OTHER_CATERGORY_NAME)
+            if (result == nil || result?.contains(anyOf: rootCategories, isCaseSensitive: false) == false) {
+                result = Self.OTHER_CATERGORY_NAME
+            }
+        }
+        
+        return result
     }
     
     func unregisterObserver(_ observer: AnyMNSettabled) {
@@ -430,29 +482,45 @@ open class MNSettings {
         }
     }
     
-    internal func createOtherCategoryIfNeeded() {
-        if self.otherCategory == nil {
+    
+    /// creates the "other" category for this settings if not already created
+    /// - Returns: returns true after creating the category, or false when the category has already existed
+    @discardableResult
+    internal func createOtherCategoryIfNeeded()->Bool {
+        if self.otherCategory == nil && Self.IS_SHOULD_USE_OTHER_CATEGORY_FOR_ORPHANS {
             self.otherCategory = OtherCategory(settings: self, customName: Self.OTHER_CATERGORY_NAME)
-            self.categories[Self.OTHER_CATERGORY_NAME] = Weak(value: self.otherCategory!)
+            self.otherCategoryItemKeys = Set()
+            // TODO: Determine if we need to register it as a regular category
+            // self.categories[Self.OTHER_CATERGORY_NAME] = Weak(value: self.otherCategory!)
+            return true
         }
+        return false
     }
     
-    func registerSettable<T:MNSettableValue>(_ settable : MNSettable<T>) {
+    
+    /// registers a Settable value to this settings instance.
+    /// - Parameter settable: settable conformant item
+    /// - Returns: true if was registered to this settings, false of not registered or registered to another settings (see ORPHANS_REGISTER_AT_SETTINGS_NAMED for example)
+    func registerSettable<T:MNSettableValue>(_ settable : MNSettable<T>) -> Bool {
         let key = self.sanitizeKey(settable.key)
-        let cat = Self.categoryName(forKey: settable.key) ?? Self.OTHER_CATERGORY_NAME
+
+        let cat = self.categoryName(forKey: settable.key) ?? Self.OTHER_CATERGORY_NAME
         if cat == Self.OTHER_CATERGORY_NAME {
+            // Other category, but in another settings
             self.createOtherCategoryIfNeeded()
-            self.registerCategory(self.otherCategory!)
+            otherCategoryItemKeys?.update(with: key)
         }
         dlog?.verbose("[\(self.name)] registerSettable \(key) cat: \(cat) state: \(self.bootState)")
         self.registerValue(settable.wrappedValue, forKey: key)
+        return true
     }
     
     func unregisterSettable<T:MNSettableValue>(_ settable : MNSettable<T>) {
         let key = self.sanitizeKey(settable.key)
-//        if self.name == Self.standard.name {
-//            dlog?.info("unreg issue unregisterSettable \(key)")
-//        }
+        if otherCategoryItemKeys?.contains(key) == true {
+            otherCategoryItemKeys?.remove(key)
+        }
+        
         self.unregisterValue(forKey: key)
     }
     
@@ -525,7 +593,7 @@ open class MNSettings {
         isDebug = true
         #endif
         
-        let categoryNames = self.categoryNames
+        let categoryNames = self.rootCategoryNames
         
         if isDebug, let dlogAll = DLog.util["MNSettings"] {
             let tab = "   "
@@ -558,10 +626,10 @@ open class MNSettings {
                     }
                 }
                 
-                if categories.count > 0 {
+                if categories.count > 0 || (self.otherCategoryItemKeys?.count ?? 0 > 0)  {
                     
                     // Filter:
-                    let rootCategories = self.categories.filter { tup in
+                    var rootCategories = self.categories.filter { tup in
                         return (tup.value.value?.nestingLevel ?? -1) == 0
                     }
                     
@@ -571,14 +639,24 @@ open class MNSettings {
                             category.logTree(depth: 2)
                         }
                     }
+                    
+                    if let other = self.otherCategory, let itemsKeys = otherCategoryItemKeys, itemsKeys.count > 0 {
+                        dlogAll.info(tab + "+ other category. (\(itemsKeys.count)) props/items.")
+                        other.logTree(depth: 2)
+                    }
                 }
                 
                 if values.count > 0 {
                     dlogAll.info(tab + "+ values (\(values.count))")
+                    let catNames = self.rootCategoryNames
                     for (catName, vals) in values.tuplesSortedByKeys {
                         let cnt = vals.count
                         if cnt > 0 {
-                            dlogAll.info(tab2 + "category: [\(catName)] has (\(cnt)) MNSettables")
+                            var catType = catNames.contains(catName) ? "√" : "?"
+                            if catName == Self.OTHER_CATERGORY_NAME {
+                                catType = "*O*"
+                            }
+                            dlogAll.info(tab2 + "category: [\(catName)] \(catType) has (\(cnt)) MNSettables")
                             for (k, v) in vals.tuplesSortedByKeys {
                                 dlogAll.info(tab2 + tab + "k: \(k) v: \(v)")
                             }
@@ -601,9 +679,9 @@ open class MNSettings {
                         return k.hasPrefix(keyPrefix)
                     } ?? [:]
                     
-                    dlogAll.info(tab + "reg userDefaultsPersistor (\(dict.count))")
+                    dlogAll.info(tab + "+ userDefaultsPersistor (\(dict.count))")
                     for (k, v) in dict {
-                        dlogAll.info(tab2 + "reg k: \(k) v: \("\(v)".replacingOccurrences(of: .newlines, with: " "))")
+                        dlogAll.info(tab2 + "k: \(k) v: \("\(v)".replacingOccurrences(of: .newlines, with: " "))")
                     }
                 }
             }
@@ -663,7 +741,7 @@ extension MNSettings {
         let arr = Array(self.persistors)
         let total = arr.count
         if total > 0 {
-            dlog?.info(">>[5]     unsafeSetValuesIntoPersistors dict:\(dict)")
+            dlog?.verbose(">>[5]     unsafeSetValuesIntoPersistors dict:\(dict)")
             BlockingTask<Int, MNError> {[self, total, arr] in
                 var index = 0
                 for persistor in arr {
@@ -778,7 +856,11 @@ extension MNSettings {
         if !isBoot {
             try self.unsafeNotifyObservers(changes: dict, excluding: excluded)
             try self.unsafeSetValuesIntoPersistors(dict: dict)
+            dlog?.verbose("appnding changes: \(changes.descriptionLines)")
             self.changes.append(contentsOf: changes)
+            if changes.count > Self.MAX_MNSETTINGS_CHANGES_COUNT {
+                dlog?.warning("MAX_MNSETTINGS_CHANGES_COUNT overflowed!!")
+            }
         }
     }
     
@@ -786,10 +868,10 @@ extension MNSettings {
         
         @Sendable func exec() throws {
             if self.isBulkChangingNow {
-                try self.unsafeSetValuesForKeysExec(dict: dict, excluding: [], isBoot: isBoot)
+                try self.unsafeSetValuesForKeysExec(dict: dict, excluding: excluding, isBoot: isBoot)
             } else {
                 try self.bulkChanges(block: {[dict, isBoot] settings in
-                    try self.unsafeSetValuesForKeysExec(dict: dict, excluding: [], isBoot: isBoot)
+                    try self.unsafeSetValuesForKeysExec(dict: dict, excluding: excluding, isBoot: isBoot)
                 })
             }
         }
@@ -808,6 +890,14 @@ extension MNSettings {
         let sdict = try sanitizeDict(dict)
         dlog?.verbose(">>[!]  setValuesForKeys dict:\(sdict)")
         try setValuesForKeysExec(dict: dict, excluding: [], blocking:false)
+    }
+    
+    public func setValueAfterLoad<V : MNSettableValue>(_ value: V, forKey key: MNSKey) throws {
+        try self.lock.withLockVoid {
+            let sdict = try self.sanitizeDict([key:value])
+            dlog?.info(">>[!]  setValueAfterLoad dict:\(sdict)")
+            try self.setValuesForKeysExec(dict: sdict, excluding: [], isBoot: true)
+        }
     }
     
     public func setValue<V : MNSettableValue>(_ value: V, forKey key: MNSKey) throws {
@@ -835,7 +925,7 @@ extension MNSettings {
     }
 
     public func unregisterValue(forKey key: MNSKey) {
-        let cat = Self.categoryName(forKey: key) ?? Self.OTHER_CATERGORY_NAME
+        let cat = self.categoryName(forKey: key) ?? Self.OTHER_CATERGORY_NAME
         
         if var vals = self.values[cat], vals.hasKey(key) {
             dlog?.success("\(self.name) unregisterValue \(key) cat: \(cat)")
@@ -861,7 +951,9 @@ extension MNSettings {
                 // Already registered, same value
                 return
             }
-            dlog?.success("\(self.name).registerValue \"\(key)\" ")
+            
+            // Did not exist: will register now:
+            dlog?.verbose(log:.success, "\(self.name).registerValue \"\(key)\" ")
             let dict = [key:value]
             let sdict = try sanitizeDict(dict)
             try setValuesForKeysExec(dict: sdict, excluding: [], blocking:false, isBoot: true)
@@ -872,15 +964,14 @@ extension MNSettings {
     
     public func fetchValueFromPersistors<V : MNSettableValue>(forKey key:String) async throws ->V? {
         guard self.hasKey(key) else {
-            dlog?.fail("\(self) fetchValueFromPersistors - has no key: \(key)")
+            dlog?.verbose(log:.fail, "\(self.name) fetchVFP - has no key: \(key)")
             return nil
         }
-        
         
         var vals : [V] = []
         for persistor in self.persistors {
             if let val  : V = try await persistor.fetchValue(forKey: key) {
-                dlog?.verbose(log:.success, "\(self) fetchValueFromPersistors - [\(persistor)] returned \(val) : \(type(of:val))")
+                dlog?.verbose(log:.success, "\(self.name) fetchVFP - [\(persistor)] returned \(val) : \(type(of:val))")
                 vals.append(val)
             }
         }
@@ -895,7 +986,14 @@ extension MNSettings {
             // V : Hashable & Codable & Equatable & CustomStringConvertible
             resultvalue = vals.majorityValue(whenTwoVals: .first)
         }
-        dlog?.verbose("\(self) fetchValueFromPersistors - for: \(key) returned: \(resultvalue.descOrNil)")
+        if MNUtils.debug.IS_DEBUG {
+            if let resultvalue = resultvalue {
+                dlog?.verbose("\(self.name) >>> fetchVFP k: \(key) v: \(resultvalue) in \(vals.count) persistors")
+            } else {
+                dlog?.verbose("\(self.name) >>> fetchVFP k: \(key) v: <NIL>")
+            }
+        }
+        
         return resultvalue
     }
     
@@ -961,7 +1059,7 @@ extension MNSettings {
     
     private func appendChange(key:MNSKey, action:MNSChange, from:String?, to:String?) {
         self.changes.append(MNSChangeRecord(key: key, action: action, from: from, to: to))
-        dlog?.verbose("{\(self.name)} MNSChangeRecord for key: \(key) action: \(action.asString) from: \(from.descOrNil) to: \(to.descOrNil)")
+        dlog?.info("{\(self.name)} MNSChangeRecord for key: \(key) action: \(action.asString) from: \(from.descOrNil) to: \(to.descOrNil)")
     }
     
     public func keyWasChanged(from fromKey: MNSKey,
