@@ -2,14 +2,13 @@
 //  MNSettingsCategory+Reflections.swift
 //  
 //
-//  Created by Ido on 23/10/2023.
-//
+// Created by Ido Rabin for Bricks on 17/1/2024.
 
 import Foundation
-import DSLogger
+import Logging
 import MNUtils
 
-fileprivate let dlog : DSLogger? = DLog.forClass("MNSettingsCategory+Reg")?.setting(verbose: false)
+fileprivate let dlog : Logger? = Logger(label: "MNSettingsCategory+Reg")  // DLog.forClass("MNSettingsCategory+Reg")?.setting(verbose: false)
 
 extension MNSettingsCategory : MNSettingsCategoryRegistrable /* reflections */ {
     
@@ -49,7 +48,7 @@ extension MNSettingsCategory : MNSettingsCategoryRegistrable /* reflections */ {
             return nil
         })
         
-        dlog?.verbose(log:.success, "\(self.fullPath) registerCategories (found: \(self.subCategories?.count ?? 0) FOR DEPTH: \(depth + 1))")
+        dlog?.verbose("✔ \(self.fullPath) registerCategories (found: \(self.subCategories?.count ?? 0) FOR DEPTH: \(depth + 1))")
         for sub in subCategories ?? [] {
             if let sub = sub.value {
                 sub.registerCategories(isBoot:isBoot, depth: depth + 1)
@@ -111,7 +110,7 @@ extension MNSettingsCategory : MNSettingsCategoryRegistrable /* reflections */ {
                     do {
                         try refChild.setKey(newKey, context: context)
                     } catch let error {
-                        dlog?.note(tab + "validateKeysInCategory failed setKey: \"\(newKey)\" error: \(error.description)")
+                        dlog?.notice("\(tab) validateKeysInCategory failed setKey: \"\(newKey)\" error: \(error.description)")
                     }
                 }
                 

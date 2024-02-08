@@ -1,16 +1,15 @@
 //
-//  File.swift
-//  
+//  MNSettingsEx.swift
 //
-//  Created by Ido on 16/08/2023.
 //
+// Created by Ido Rabin for Bricks on 17/1/2024.
 
 import Foundation
-import DSLogger
+// import Logging
 import MNUtils
 
 #if VAPOR
 import Vapor
 #endif
 
-fileprivate let dlog : DSLogger? = DLog.forClass("MNSettingsEx")?.setting(verbose: true)
+//fileprivate let dlog : Logger? = Logger(label: "MNSettingsEx")

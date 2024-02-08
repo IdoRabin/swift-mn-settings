@@ -2,14 +2,13 @@
 //  MNSettingsProvider.swift
 //  
 //
-//  Created by Ido on 16/08/2023.
-//
+// Created by Ido Rabin for Bricks on 17/1/2024.
 
 import Foundation
 import MNUtils
-import DSLogger
+import Logging
 
-fileprivate let dlog : DSLogger? = DLog.forClass("MNSettingsProvider")?.setting(verbose: true)
+fileprivate let dlog : Logger? = Logger(label: "MNSettingsProvider") // .setting(verbose: true)
 
 
 /// Implementors should be able to perform fetch operations for key/value pairs from a source

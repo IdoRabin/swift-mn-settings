@@ -2,14 +2,13 @@
 //  MNSettable.swift
 //  
 //
-//  Created by Ido on 08/08/2023.
-//
+// Created by Ido Rabin for Bricks on 17/1/2024.
 
 import Foundation
-import DSLogger
+import Logging
 import MNUtils
 
-fileprivate let dlog : DSLogger? = DLog.forClass("MNSettable_")?.setting(verbose: false)
+fileprivate let dlog : Logger? = Logger(label: "MNSettable_") // .forClass("MNSettable_")?.setting(verbose: false)
 
 public typealias MNSCategoryName = String
 public typealias MNSKey = String
@@ -42,7 +41,7 @@ public final class MNSettable<ValueType : MNSettableValue> : Codable {
             do {
                 try self.setValue(newValue)
             } catch let error {
-                dlog?.warning("\(Self.self).\(key) setWrapperdValue failed with error: \(error.description)")
+                dlog?.warning("\(Self.self).\(self.key) setWrapperdValue failed with error: \(error.description)")
             }
         }
     }
@@ -124,12 +123,12 @@ public final class MNSettable<ValueType : MNSettableValue> : Codable {
                 self.defaultValue = val
             } else {
                 let msg = "init(from decoder:) key: \(self.key) try container.decodeIfPresent(ValueType.self, forKey:.defaultValue) returned nil or failed decoding"
-                dlog?.note(msg)
+                dlog?.notice("\(msg)")
                 throw MNError(code: .misc_failed_loading, reason: msg)
             }
         } else {
             let msg = "init(from decoder:) decoder.userInfo[Self.IGNORE_DEFAULTS_KEY] - we ignore the loaded defaults"
-            dlog?.note(msg)
+            dlog?.notice("\(msg)")
             throw MNError(code: .misc_failed_loading, reason: msg)
         }
         
@@ -138,7 +137,7 @@ public final class MNSettable<ValueType : MNSettableValue> : Codable {
                 self.settings = instance
             } else {
                 let name = MNSettings.implicit?.name ?? MNSettings.standard.name
-                dlog?.note("init(from decoder:) did not find instance for settingsName: \(settingsName). using. Using \(name)")
+                dlog?.notice("init(from decoder:) did not find instance for settingsName: \(settingsName). using. Using \(name)")
                 self.settings = MNSettings.implicit
             }
         }
@@ -243,7 +242,7 @@ extension MNSettable : MNSettabled {
         }
         guard forceUpdate || newVal != _value else {
             // No need to set the value again...
-            dlog?.verbose(log: .note, "\(Self.self) key: \(self.key) setValue - value \(newVal) is already set!")
+            dlog?.verbose("⚠️️ \(Self.self) key: \(self.key) setValue - value \(newVal) is already set!")
             return
         }
         
@@ -284,7 +283,7 @@ extension MNSettable : MNSettabled {
             throw MNError(code: .misc_bad_input, reason: "\(Self.self).setKey failed with new key: \(skey) - it does not contain a category. Use \(MNSettings.CATEGORY_DELIMITER) as a delimiter. first value is the category.")
         }
         if skey != key {
-            // dlog?.verbose(log: .success, "Set new key: \"\(key)\" => \"\(skey)\" ")
+            // dlog?.verbose(symbol: .success, "Set new key: \"\(key)\" => \"\(skey)\" ")
             let prev = key
             self.key = skey
             

@@ -2,14 +2,13 @@
 //  MNSettingsPersistor.swift
 //  
 //
-//  Created by Ido on 16/08/2023.
-//
+// Created by Ido Rabin for Bricks on 17/1/2024.
 
 import Foundation
 import MNUtils
-import DSLogger
+import Logging
 
-fileprivate let dlog : DSLogger? = DLog.forClass("MNSettingsPersistor")?.setting(verbose: true)
+fileprivate let dlog : Logger? = Logger(label: "MNSettingsPersistor") //  DLog.forClass("MNSettingsPersistor")?.setting(verbose: true)
 
 
 /// Alllows saving / loading operations for a MNSettings provider / implementor

@@ -19,10 +19,8 @@ let package = Package(
         // Dependencies declare other packages that this package depends on.
         
         // In-House pakcages
-//        .package(url: "https://gitlab.com/ido_r_demos/DSLogger.git", from:"0.0.1"),
 //        .package(url: "https://gitlab.com/ido_r_demos/MNUtils.git", from:"0.0.2"),
         .package(path: "../../MNUtils/MNUtils"),
-        .package(path: "../../DSLogger/"),
     ],
     targets: [
         // Targets are the basic building blocks of a package. A target can define a module or a test suite.
@@ -31,7 +29,6 @@ let package = Package(
             name: "MNSettings",
             dependencies: [
                 // In-House pakcages
-                .product(name: "DSLogger", package: "DSLogger"),
                 .product(name: "MNUtils", package: "MNUtils"),
             ],
             swiftSettings: [

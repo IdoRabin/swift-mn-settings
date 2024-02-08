@@ -2,18 +2,17 @@
 //  MNSettingsCategory.swift
 //  
 //
-//  Created by Ido on 15/08/2023.
-//
+// Created by Ido Rabin for Bricks on 17/1/2024.
 
 import Foundation
-import DSLogger
+import Logging
 import MNUtils
 
 #if VAPOR
 import Vapor
 #endif
 
-fileprivate let dlog : DSLogger? = DLog.forClass("MNSettingsCategory")?.setting(verbose: false)
+fileprivate let dlog : Logger? = Logger(label: "MNSettingsCategory") // DLog.forClass("MNSettingsCategory")?.setting(verbose: false)
 
 protocol MNSettingsCategoryRegistrable {
     func registerSettableProperties(isBoot:Bool)
@@ -76,7 +75,7 @@ open class MNSettingsCategory { // : CustomDebugStringConvertible
     }
     
     deinit {
-        dlog?.note("deinit \(self.categoryName)")
+        dlog?.notice("deinit \(self.categoryName)")
     }
     
     // MARK: Private
@@ -100,12 +99,12 @@ open class MNSettingsCategory { // : CustomDebugStringConvertible
     
     var isCanRecourse : Bool {
         guard self.settings != nil else {
-            dlog?.note("\(self.debugDescription).isCanRecourse failed: no settings!")
+            dlog?.notice("\(self.debugDescription).isCanRecourse failed: no settings!")
             return false
         }
         
         guard self.nestingLevel <= Self.MAX_NESTING_LEVEL else {
-            dlog?.note("\(self.debugDescription).isCanRecourse failed: top nesting level reached: MAX_NESTING_LEVEL")
+            dlog?.notice("\(self.debugDescription).isCanRecourse failed: top nesting level reached: MAX_NESTING_LEVEL")
             return false
         }
         
@@ -146,7 +145,7 @@ open class MNSettingsCategory { // : CustomDebugStringConvertible
         if false && MNUtils.debug.IS_DEBUG {
             let tab = "  ".repeated(times: self.nestingLevel)
             let ctx = self.debugDescription
-            dlog?.info(tab + ctx + " recourseDownTree")
+            dlog?.info("\(tab + ctx) recourseDownTree")
         }
 
         // clean Subsettings from weak elements that were released:
@@ -226,7 +225,7 @@ open class MNSettingsCategory { // : CustomDebugStringConvertible
             let tab = "  ".repeated(times: depth)
             let cnt =  cat.subCategories?.count ?? 0
             let sign = (cnt > 0 || cat.nestingLevel == 0) ? "+ " : ("  - ")
-            dlog?.info(tab + sign + cat.debugDescription + " has \(cnt) sub-categories.")
+            dlog?.info("\(tab + sign + cat.debugDescription) has \(cnt) sub-categories.")
         }
     }
 
@@ -239,7 +238,7 @@ open class MNSettingsCategory { // : CustomDebugStringConvertible
                 }
                 let prefix = cat.parentCategoryNames.joined(separator: MNSettings.CATEGORY_DELIMITER)
                 if !cat.categoryName.hasPrefix(prefix) {
-                    dlog?.note("Category name: [\(cat.categoryName)] should have the prefix: \(prefix)")
+                    dlog?.notice("Category name: [\(cat.categoryName)] should have the prefix: \(prefix)")
                 }
                 
                 if isLog && MNUtils.debug.IS_DEBUG == true && dlog?.isVerboseActive ?? false {

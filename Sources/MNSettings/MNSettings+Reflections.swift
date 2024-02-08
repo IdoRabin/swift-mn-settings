@@ -2,14 +2,13 @@
 //  MNSettings+Reflections.swift
 //  bricks_server
 //
-//  Created by Ido on 23/10/2023.
-//
+// Created by Ido Rabin for Bricks on 17/1/2024.
 
 import Foundation
-import DSLogger
+import Logging
 import MNUtils
 
-fileprivate let dlog : DSLogger? = DLog.forClass("MNSettings+Reg")?.setting(verbose: false)
+fileprivate let dlog : Logger? = Logger(label: "MNSettings+Reg")
 
 fileprivate let MAX_CATEGORY_SEARCH_TIMED_RECURSION_DEPTH = 8
 
@@ -22,7 +21,7 @@ extension MNSettings : MNSettingsRegistrable {
         }
         
         guard depth < MAX_CATEGORY_SEARCH_TIMED_RECURSION_DEPTH else {
-            dlog?.verbose(log:.warning, "internal_\(logPrefix) recursion is too big!")
+            dlog?.verbose("⚠️️ internal_\(logPrefix) recursion is too big!")
             return
         }
         
@@ -34,7 +33,7 @@ extension MNSettings : MNSettingsRegistrable {
         func registerE(category:MNSettingsCategory) {
             category.nestingLevel = 0
             if category.settings != self {
-                dlog?.verbose(log: .success, "\(logPrefix) changing settings for: [\(category.categoryName)] to: [\(self.name)]")
+                dlog?.verbose("✔ \(logPrefix) changing settings for: [\(category.categoryName)] to: [\(self.name)]")
                 category.settings = self
             }
             category.invalidateCategoryName()

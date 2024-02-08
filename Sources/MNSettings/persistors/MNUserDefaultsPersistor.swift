@@ -2,14 +2,13 @@
 //  MNUserDefaultsPersistor.swift
 //  
 //
-//  Created by Ido on 08/08/2023.
-//
+// Created by Ido Rabin for Bricks on 17/1/2024.
 
 import Foundation
-import DSLogger
+import Logging
 import MNUtils
 
-fileprivate let dlog : DSLogger? = DLog.forClass("MNUserDefaultsPersistor")?.setting(verbose: false)
+fileprivate let dlog : Logger? = Logger(label: "MNUserDefaultsPersistor")
 
 // DO NOT: MNSettingSaveLoadable
 
@@ -48,7 +47,7 @@ public class MNUserDefaultsPersistor : MNSettingsPersistor {
         guard Self.DEBUG_CLEAR_ALL else {
             return
         }
-        dlog?.note("clearAllIfNeeded (clearing all settings)")
+        dlog?.notice("clearAllIfNeeded (clearing all settings)")
         
         if let dict = _udInstance?.dictionaryRepresentation() {
             for (k, _) in dict {
@@ -62,7 +61,7 @@ public class MNUserDefaultsPersistor : MNSettingsPersistor {
     public func setValue<V:MNSettableValue>(_ value:V, forKey key:String) throws {
         guard let instance = _udInstance else {
             let msg = "setValue \(value) forKey: \(key). \"instance\" does not exist!"
-            dlog?.note(msg)
+            dlog?.notice("\(msg)")
             throw MNError(code: .misc_failed_updating, reason: msg)
         }
 
@@ -73,11 +72,11 @@ public class MNUserDefaultsPersistor : MNSettingsPersistor {
     public func setValuesForKeys(dict: [MNSKey : AnyMNSettableValue]) throws {
         guard let instance = _udInstance else {
             let msg = "setValuesForKeys \(dict.keys.descriptionJoined). \"instance\" does not exist!"
-            dlog?.note(msg)
+            dlog?.notice("\(msg)")
             throw MNError(code: .misc_failed_updating, reason: msg)
         }
 
-        dlog?.verbose(">>[5]a    setValuesForKeys: \(dict)")
+        dlog?.trace(">>[5]a    setValuesForKeys: \(dict)")
         for (key, val) in dict {
             let prfxKey = self.prefixKey(key)
             instance.setValue(val, forKey: prfxKey)
@@ -112,7 +111,7 @@ public class MNUserDefaultsPersistor : MNSettingsPersistor {
     
     public func fetchValue<V:MNSettableValue>(forKey key:MNSKey) async throws -> V? {
         guard let instance = _udInstance else {
-            dlog?.note("value forKey: \(key). instance does not exist!")
+            dlog?.notice("value forKey: \(key). instance does not exist!")
             return nil
         }
 
@@ -125,7 +124,7 @@ public class MNUserDefaultsPersistor : MNSettingsPersistor {
                               context: String,
                               caller:Any?) {
         guard let instance = _udInstance else {
-            dlog?.note("keyWasChanged forKey: \(fromKey) => \(toKey) instance does not exist! (\(context))")
+            dlog?.notice("keyWasChanged forKey: \(fromKey) => \(toKey) instance does not exist! (\(context))")
             return
         }
         guard fromKey != toKey else {
@@ -134,7 +133,7 @@ public class MNUserDefaultsPersistor : MNSettingsPersistor {
         
         instance.setValue(nil, forKey: self.prefixKey(fromKey))
         instance.setValue(value, forKey: self.prefixKey(toKey))
-        dlog?.verbose("keyWasChanged from: \(fromKey) to: \(toKey) (\(context))")
+        dlog?.trace("keyWasChanged from: \(fromKey) to: \(toKey) (\(context))")
     }
 
     public func valueWasChanged(key: MNSKey,
@@ -143,7 +142,7 @@ public class MNUserDefaultsPersistor : MNSettingsPersistor {
                                 context: String,
                                 caller:Any?) {
         guard let instance = _udInstance else {
-            dlog?.note("valueWasChanged  from: \(fromValue) to: \(toValue)  \(key) instance does not exist! (\(context))")
+            dlog?.notice("valueWasChanged  from: \(fromValue.description) to: \(toValue.description)  \(key) instance does not exist! (\(context))")
             return
         }
 
@@ -152,13 +151,13 @@ public class MNUserDefaultsPersistor : MNSettingsPersistor {
         if prev?.hashValue != fromValue.hashValue {
             instance.setValue(toValue, forKey: prefKey)
         } else if prev?.hashValue != toValue.hashValue {
-            dlog?.verbose(log: .fail, "\(Self.self) valueWasChanged for key: \(key) did not need to change value - new value was already set! \(toValue)")
+            dlog?.notice("\(Self.self) valueWasChanged for key: \(key) did not need to change value - new value was already set! \(toValue.description)")
         } else {
             instance.setValue(toValue, forKey: prefKey)
         }
 
 
-        dlog?.verbose("valueWasChanged for: \(key) from: \(fromValue) to: \(toValue) context: \(context)")
+        dlog?.trace("valueWasChanged for: \(key) from: \(fromValue.description) to: \(toValue.description) context: \(context)")
     }
     
     // TODO: Should we register all default values ?

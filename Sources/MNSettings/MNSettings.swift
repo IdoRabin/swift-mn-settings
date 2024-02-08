@@ -1,12 +1,12 @@
 //
 //  MNSettings.swift
 //
-//  Created by Ido Rabin on 24/07/2023.
-//  Copyright © 2023 IdoRabin. All rights reserved.
+// Created by Ido Rabin for Bricks on 17/1/2024.
+// Copyright © 2024 Bricks. All rights reserved.
 //
 
 import Foundation
-import DSLogger
+import Logging
 import MNUtils
 
 #if VAPOR
@@ -14,7 +14,7 @@ import Vapor
 #endif
 
 
-fileprivate let dlog : DSLogger? = DLog.forClass("MNSettings")?.setting(verbose: false)
+fileprivate let dlog : Logger? = Logger(label: "MNSettings")
 // TODO: MNSettings Rewrite the init/registration order for MNSettings and MNSettingsCategoty and MNSettable so that no stupid init with delay timers and etc..
 
 public typealias MNSettableValue = Hashable & Codable & Equatable & CustomStringConvertible
@@ -214,10 +214,10 @@ open class MNSettings {
                     if newProviderCount > allProvidersCount {
                         dlog?.warning("[\(self.name)] Providers added after load started! waiting for other providers")
                     } else if Self.DEBUG_IS_SHOULD_DELAY_LOAD == true {
-                        dlog?.note("[\(self.name)] Will wait because DEBUG_IS_SHOULD_DELAY_LOAD")
+                        dlog?.notice("[\(self.name)] Will wait because DEBUG_IS_SHOULD_DELAY_LOAD")
                         delay = max(Self.DEBUG_LOAD_DELAY, 0.05)
                     } else {
-                        dlog?.verbose(log:.info, "[\(self.name)] Will wait because too soon (giving a chance to async add settings providers)")
+                        dlog?.verbose("[\(self.name)] Will wait because too soon (giving a chance to async add settings providers)")
                     }
                     
                     MNExec.exec(afterDelay: delay) {
@@ -277,7 +277,7 @@ open class MNSettings {
     }
     
     deinit {
-        dlog?.info("MNSettings(named:\(name)).deinit")
+        dlog?.info("MNSettings(named:\(self.name)).deinit")
     }
     
     // MARK: Private
@@ -335,7 +335,7 @@ open class MNSettings {
         
         var toRemove : [Int] = []
         if depth < 16 && settings.observers.count < settings.allKeys.count {
-            dlog?.note("[\(settings.name)] notifyLoaded delayed \(depth)")
+            dlog?.notice("[\(settings.name)] notifyLoaded delayed \(depth)")
             MNExec.exec(afterDelay: 0.05) {[depth, settings] in
                 self.notifyLoaded(loadStartTime:loadStartTime, settings:settings, depth: depth + 1)
             }
@@ -379,7 +379,7 @@ open class MNSettings {
         if category == nil {
             category = Self.OTHER_CATERGORY_NAME
             let newKey = category! + Self.CATEGORY_DELIMITER + skey
-            dlog?.verbose(log: .note, "sanitizeKey: \"\(key)\" had no category! (changing to \"\(newKey)\")")
+            dlog?.verbose("⚠️️ sanitizeKey: \"\(key)\" had no category! (changing to \"\(newKey)\")")
             skey = newKey
         }
         
@@ -399,7 +399,7 @@ open class MNSettings {
         for (key, val) in dict {
             if MNUtils.debug.IS_DEBUG && self.categoryName(forKey: key) == nil {
                 let msg = "{\(name)} DEBUG: sanitizeDict with key: [\(key)] - key does not contain a category or other fault!"
-                // dlog?.note(msg)
+                // dlog?.notice(msg)
                 throw MNError(code: .misc_failed_saving, reason: "MNSettings." + msg)
             }
             
@@ -419,7 +419,7 @@ open class MNSettings {
     public static func categoryName(forKey key : MNSKey, delimiter:String = MNSettings.CATEGORY_DELIMITER)->MNSCategoryName? {
         var comps = key.components(separatedBy: delimiter)
         guard comps.count > 1 else {
-            // dlog?.verbose(log: .note, "{\(name)} categoryName(forKey: \"\(key)\") has no category!")
+            // dlog?.verbose(symbol: .note, "{\(name)} categoryName(forKey: \"\(key)\") has no category!")
             return nil
         }
         comps.removeLast()
@@ -452,7 +452,7 @@ open class MNSettings {
             if initialCount < obsList.count {
                 dlog?.success("\(self.name).unregisterObserver \"\(observer.key)\" ")
             } else {
-                dlog?.verbose(log: .fail, "\(self.name).unregisterObserver failed finding \"\(observer.key)\" ")
+                dlog?.verbose("✔ \(self.name).unregisterObserver failed finding \"\(observer.key)\" ")
             }
         }
         if obsList.count == 0 {
@@ -470,7 +470,7 @@ open class MNSettings {
             obsList.append(observer)
             self.observers[observer.key] = obsList
             if name != Self.DEFAULT_MNSETTINGS_NAME {
-                dlog?.verbose(log: .success, "{\(name)} did registerObserver \(observer)")
+                dlog?.verbose("✔ {\(name)} did registerObserver \(observer)")
             }
         }
     }
@@ -595,7 +595,7 @@ open class MNSettings {
         
         let categoryNames = self.rootCategoryNames
         
-        if isDebug, let dlogAll = DLog.util["MNSettings"] {
+        if isDebug, let dlogAll = dlog {
             let tab = "   "
             let tab2 = tab.repeated(times: 2)
             var userDefaultsPersistor : MNUserDefaultsPersistor? = nil
@@ -605,23 +605,23 @@ open class MNSettings {
             } else {
                 dlogAll.info("- instance [\(self.name)] state: .\(self.bootState)")
                 if persistors.count > 0 {
-                    dlogAll.info(tab + "+ persistors (\(persistors.count)) for [\(self.name)]")
+                    dlogAll.info("\(tab)+ persistors (\(self.persistors.count)) for [\(self.name)]")
                     for persistor in persistors {
-                        dlogAll.info(tab2 + "persistor (\(persistor))")
+                        dlogAll.info("\(tab2) persistor (\( "\(persistor)" ))")
                         if let pers = (persistor as? MNUserDefaultsPersistor) {
                             userDefaultsPersistor = pers
                         }
                     }
                 }
                 if observers.count > 0 {
-                    dlogAll.info(tab + "+ observers (\(observers.count)) for [\(self.name)]")
+                    dlogAll.info("\(tab)+ observers (\(self.observers.count)) for [\(self.name)]")
                     
                     for (oberverKey, observers) in observers.tuplesSortedByKeys { // SEE: private var observers : [MNSKey:[AnyMNSettabled]]
                         let descs = observers.keys.descriptions()
                         if descs.contains(elementEqualTo: oberverKey) {
-                            dlogAll.info(tab2 + "observer: key: \(oberverKey). ✔ key")
+                            dlogAll.info("\(tab2) observer: key: \(oberverKey). ✔ key")
                         } else {
-                            dlogAll.info(tab2 + "observer: key: \(oberverKey) observers: \(descs.descriptionsJoined). ✘ key is IRREGULAR: not one observer with the same key")
+                            dlogAll.info("\(tab2) observer: key: \(oberverKey) observers: \(descs.descriptionsJoined). ✘ key is IRREGULAR: not one observer with the same key")
                         }
                     }
                 }
@@ -633,7 +633,7 @@ open class MNSettings {
                         return (tup.value.value?.nestingLevel ?? -1) == 0
                     }
                     
-                    dlogAll.info(tab + "+ root categories \(rootCategories.count) roots / \(categories.count) total categories")
+                    dlogAll.info("\(tab)+ root categories \(rootCategories.count) roots / \(self.categories.count) total categories")
                     for (_, weakCategory) in rootCategories {
                         if let category = weakCategory.value {
                             category.logTree(depth: 2)
@@ -641,13 +641,13 @@ open class MNSettings {
                     }
                     
                     if let other = self.otherCategory, let itemsKeys = otherCategoryItemKeys, itemsKeys.count > 0 {
-                        dlogAll.info(tab + "+ other category. (\(itemsKeys.count)) props/items.")
+                        dlogAll.info("\(tab)+ other category. (\(itemsKeys.count)) props/items.")
                         other.logTree(depth: 2)
                     }
                 }
                 
                 if values.count > 0 {
-                    dlogAll.info(tab + "+ values (\(values.count))")
+                    dlogAll.info("\(tab)+ values (\(self.values.count))")
                     let catNames = self.rootCategoryNames
                     for (catName, vals) in values.tuplesSortedByKeys {
                         let cnt = vals.count
@@ -656,21 +656,21 @@ open class MNSettings {
                             if catName == Self.OTHER_CATERGORY_NAME {
                                 catType = "*O*"
                             }
-                            dlogAll.info(tab2 + "category: [\(catName)] \(catType) has (\(cnt)) MNSettables")
+                            dlogAll.info("\(tab2) category: [\(catName)] \(catType) has (\(cnt)) MNSettables")
                             for (k, v) in vals.tuplesSortedByKeys {
-                                dlogAll.info(tab2 + tab + "k: \(k) v: \(v)")
+                                dlogAll.info("\(tab2 + tab) k: \(k) v: \( "\(v)" )")
                             }
                         }
                     }
                 }
                 
                 if changes.count > 0 {
-                    dlogAll.info(tab + "+ changes (\(changes.count))")
+                    dlogAll.info("\(tab)+ changes (\(self.changes.count))")
                     for change in changes {
-                        dlogAll.info(tab2 + tab + "change: \(change.key) action: \(change.action.asString) from: \(change.from.descOrNil) to: \(change.to.descOrNil)")
+                        dlogAll.info("\(tab2 + tab) change: \(change.key) action: \(change.action.asString) from: \(change.from.descOrNil) to: \(change.to.descOrNil)")
                     }
                 } else {
-                    dlogAll.info(tab + "- changes (\(changes.count)) : NONE")
+                    dlogAll.info("\(tab)- changes (\(self.changes.count)) : NONE")
                 }
                 
                 if let userDefaultsPersistor = userDefaultsPersistor {
@@ -679,9 +679,9 @@ open class MNSettings {
                         return k.hasPrefix(keyPrefix)
                     } ?? [:]
                     
-                    dlogAll.info(tab + "+ userDefaultsPersistor (\(dict.count))")
+                    dlogAll.info("\(tab)+ userDefaultsPersistor (\(dict.count))")
                     for (k, v) in dict {
-                        dlogAll.info(tab2 + "k: \(k) v: \("\(v)".replacingOccurrences(of: .newlines, with: " "))")
+                        dlogAll.info("\(tab2) k: \(k) v: \("\(v)".replacingOccurrences(of: .newlines, with: " "))")
                     }
                 }
             }
@@ -689,7 +689,7 @@ open class MNSettings {
     }
     
     public func clearChanges() {
-        dlog?.note("\(self) clearChanges \(changes.count) state: \(self.bootState)")
+        dlog?.notice("\(self) clearChanges \(self.changes.count) state: \(self.bootState)")
         self.changes.removeAll(keepingCapacity: true)
     }
     
@@ -725,7 +725,7 @@ extension MNSettings {
         // Trampoline into non-main thread:
         if Thread.current.isMainThread {
             Task.detached {[dict, self] in
-                dlog?.note("unsafeSetValuesIntoPersistors called from MainThread! will use a trampoline (the thrown errors are not handled)")
+                dlog?.notice("unsafeSetValuesIntoPersistors called from MainThread! will use a trampoline (the thrown errors are not handled)")
                 do {
                     try self.unsafeSetValuesIntoPersistors(dict:dict)
                 } catch let error {
@@ -746,7 +746,7 @@ extension MNSettings {
                 var index = 0
                 for persistor in arr {
                     do {
-                        dlog?.verbose(log:.success, ">>[5]    \(self.name) \(index + 1)/\(total) into: \(type(of:persistor))")
+                        dlog?.verbose("✔ >>[5]    \(self.name) \(index + 1)/\(total) into: \(type(of:persistor))")
                         try await persistor.setValuesForKeys(dict: dict)
                     } catch let err {
                         dlog?.warning(">>[5]    \(self.name) \(index + 1)/\(total) unsafeSetValuesIntoPersistors dict:\(dict) error: \(err.description)")
@@ -757,7 +757,7 @@ extension MNSettings {
                 return index + 1
             }
         } else {
-            dlog?.note(">>[5]     unsafeSetValuesIntoPersistors NO PERSISTORS \(dict)")
+            dlog?.notice(">>[5]     unsafeSetValuesIntoPersistors NO PERSISTORS \(dict)")
         }
         
         // ? ThrowingTaskGroup
@@ -774,7 +774,7 @@ extension MNSettings {
                 
                 if xVals.count == 0 {
                     self.values[category] = nil
-                    if !isBoot { dlog?.note(">>[4]a   unsafeSetValuesForKeys cleared vals bcus count was 0") }
+                    if !isBoot { dlog?.notice(">>[4]a   unsafeSetValuesForKeys cleared vals bcus count was 0") }
                 } else {
                     self.values[category] = xVals
                     self.setNotEmpty()
@@ -812,13 +812,13 @@ extension MNSettings {
                     if skipped.count > 0 {
                         isSkip = true
                         // This prevents circular notification when the change was evoked in the AnyMNSettabled and called into the settings using "ValueWasChanged(...caller:)" - we exclude the caller from the notify observers call
-                        dlog?.note(">>[5]a   {\(name)} unsafeNotifyObservers change for key: \(key) will skip \(skipped.count) excluded items.")
+                        dlog?.notice(">>[5]a   {\(self.name)} unsafeNotifyObservers change for key: \(key) will skip \(skipped.count) excluded items.")
                     }
                     
                     // TODO: Uncomment if needed. re-check if skipping other keys is ok.
                     // Skip if observer is not of the same key:
                     if MNUtils.debug.IS_DEBUG && observer.key != key {
-                        dlog?.note("{\(name)} unsafeNotifyObservers change for key: \(key) called observer that has another key: \(observer.key)")
+                        dlog?.notice("{\(self.name)} unsafeNotifyObservers change for key: \(key) called observer that has another key: \(observer.key)")
                         isSkip = true
                     }
                     
@@ -939,7 +939,7 @@ extension MNSettings {
             }
         } else if false && MNUtils.debug.IS_DEBUG && dlog?.isVerboseActive == true {
             self.lock.withLock {
-                dlog?.verbose(log:.fail, "[\(self.name)] unregisterValue failed to find key: \(key) vals: \(self.values) cats: \(self.categories)")
+                dlog?.verbose("✘ [\(self.name)] unregisterValue failed to find key: \(key) vals: \(self.values) cats: \(self.categories)")
             }
         }
     }
@@ -953,7 +953,7 @@ extension MNSettings {
             }
             
             // Did not exist: will register now:
-            dlog?.verbose(log:.success, "\(self.name).registerValue \"\(key)\" ")
+            dlog?.verbose("✔ \(self.name).registerValue \"\(key)\" ")
             let dict = [key:value]
             let sdict = try sanitizeDict(dict)
             try setValuesForKeysExec(dict: sdict, excluding: [], blocking:false, isBoot: true)
@@ -964,14 +964,14 @@ extension MNSettings {
     
     public func fetchValueFromPersistors<V : MNSettableValue>(forKey key:String) async throws ->V? {
         guard self.hasKey(key) else {
-            dlog?.verbose(log:.fail, "\(self.name) fetchVFP - has no key: \(key)")
+            dlog?.verbose("✘ \(self.name) fetchVFP - has no key: \(key)")
             return nil
         }
         
         var vals : [V] = []
         for persistor in self.persistors {
             if let val  : V = try await persistor.fetchValue(forKey: key) {
-                dlog?.verbose(log:.success, "\(self.name) fetchVFP - [\(persistor)] returned \(val) : \(type(of:val))")
+                dlog?.verbose("✔ \(self.name) fetchVFP - [\(persistor)] returned \(val) : \(type(of:val))")
                 vals.append(val)
             }
         }
@@ -1004,7 +1004,7 @@ extension MNSettings {
     
     public func asyncBulkChanges(block: @escaping MNSettingsAsyncCompletionBlock) async throws {
         if self.isBulkChangingNow {
-            dlog?.warning("\(name) asyncBulkChanges - already changing, will wait.")
+            dlog?.warning("\(self.name) asyncBulkChanges - already changing, will wait.")
         }
         
         let newKey = createBulkChangesKey()
@@ -1023,7 +1023,7 @@ extension MNSettings {
     public func bulkChanges(block: @escaping  MNSettingsCompletionBlock) throws {
 
         if self.isBulkChangingNow {
-            dlog?.warning("\(name) bulkChanges - already changing, will wait.")
+            dlog?.warning("\(self.name) bulkChanges - already changing, will wait.")
         }
 
         let newKey = createBulkChangesKey()
@@ -1052,7 +1052,7 @@ extension MNSettings {
                 }
                 try self.unsafeNotifyObservers(changes: defaults, isDefaults: true, excluding: [])
             } else {
-                dlog?.note("{\(self.name)} resetToDefaults - defaultsProvider: \(self.defaultsProvider.descOrNil) failed fetching defaults!")
+                dlog?.notice("{\(self.name)} resetToDefaults - defaultsProvider: \(self.defaultsProvider.descOrNil) failed fetching defaults!")
             }
         })
     }
@@ -1068,7 +1068,7 @@ extension MNSettings {
                               context:String,
                               caller:Any?) {
         guard fromKey != toKey else {
-            dlog?.note("keyWasChanged - changed with exactly itself - no action was taken!")
+            dlog?.notice("keyWasChanged - changed with exactly itself - no action was taken!")
             return
         }
         
@@ -1145,7 +1145,7 @@ extension MNSettings {
                     dlog?.verbose(">>[2]a Will change! \(existingVal) == \(toValue) hashValues are NOT equal (cur saved [\(existingVal)] was the fromValue)!")
                     
                 } else if existingVal.hashValue == toValue.hashValue{
-                    // dlog?.verbose(log: .fail, "{\(self.name)} valueWasChanged did not need to change - new value was already set!")
+                    // dlog?.verbose(symbol: .fail, "{\(self.name)} valueWasChanged did not need to change - new value was already set!")
                     dlog?.verbose(">>[2]b Will not change: \(existingVal) == \(toValue) (cur saved [\(existingVal)] was already the toValue)")
                 } else {
                     vals[key] = toValue
@@ -1153,7 +1153,7 @@ extension MNSettings {
                     dlog?.verbose(">>[2]c Will change: \(existingVal) != \(toValue) (cur saved [\(existingVal)] was not the from and not the to value)")
                 }
             } else {
-                dlog?.verbose(log: .success, "{\(self.name)} valueWasChanged did change - new value was never set!")
+                dlog?.verbose("✔ {\(self.name)} valueWasChanged did change - new value was never set!")
                 vals[key] = toValue
                 shouldChange = true
             }
@@ -1175,7 +1175,7 @@ extension MNSettings {
                         })
                     }
                 } catch let error {
-                    dlog?.note("valueWasChanged failed try with error: \(error.description)")
+                    dlog?.notice("valueWasChanged failed try with error: \(error.description)")
                 }
             }
         }

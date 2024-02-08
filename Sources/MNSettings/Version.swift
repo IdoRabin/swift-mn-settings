@@ -2,8 +2,7 @@
 //  Version.swift
 //
 //
-//  Created by Ido on 21/10/2023.
-//
+// Created by Ido Rabin for Bricks on 17/1/2024.
 
 import Foundation
 import MNUtils
@@ -23,10 +22,10 @@ enum PreRelease: String {
 let MNSETTINGS_NAME_STR : String = "MNSettings"
 
 // String fields allow only alphanumerics and a hyphen (-)
-let MNSETTINGS_BUILD_NR : Int = 22
+let MNSETTINGS_BUILD_NR : Int = 92
 let MNSETTINGS_BUILD_VERSION = MNSemver (
     major: 0,
-    minor: 1,
+    minor: 2,
     patch: 0,
     prerelease: "\(PreRelease.alpha.rawValue)",
     metadata: [String(format: "%04X", MNSETTINGS_BUILD_NR)]
