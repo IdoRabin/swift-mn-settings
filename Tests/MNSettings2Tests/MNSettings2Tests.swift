@@ -1,11 +1,66 @@
 import XCTest
-@testable import MNSettings
+@testable import MNSettings2
 import DSLogger
 import MNUtils
 
-final class MNSettingsTests: XCTestCase {
+fileprivate let dlog : DSLogger? = DLog.forClass("AppSettingsTest")?.setting(verbose: true)
 
+class AppSettings : MNSettings {
+    class AppCategory1 : MNSettingsCategory {
+        
+    }
+    class AppCategory2 : MNSettingsCategory {
+        
+    }
+    let category1 = AppCategory1()
+    let category2 = AppCategory2()
+    var category3 : AppCategory3!
+    var category4 : AppCategory4? = nil
+    var x : Int = 1
+    var y : String = "y"
     
+    override init(key: MNSKey? = nil) {
+        self.category3 = AppCategory3(parentKeys: nil)
+        super.init(key: key)
+    }
+    
+    required init(from decoder: Decoder) throws {
+        try super.init(from: decoder)
+    }
+}
+
+class AppCategory4 : MNSettingsCategory {
+    
+}
+
+class AppCategory3 : MNSettingsCategory {
+    
+}
+
+final class MNSettings2Tests: XCTestCase {
+
+    let appSettings = AppSettings()
+    
+    override func setUp() {
+        appSettings.category4 = AppCategory4(key: "AppCategory4Four")
+    }
+    
+    override func tearDown() {
+    }
+    
+    func testSettings() throws {
+        let expectation = XCTestExpectation(description: "delay test")
+        MNExec.exec(afterDelay: 1.0) {
+            if self.appSettings.bootState == .running {
+                expectation.fulfill()
+            } else {
+                dlog?.note("AppSettings is still: \(self.appSettings.bootState)")
+            }
+        }
+        wait(for: [expectation], timeout: 1.5)
+    }
+    
+    /*
     class AppStats : MNSettingsCategory {
         @MNSettable(key: "launchCount", default: 99) var launchCount
         
@@ -82,4 +137,5 @@ final class MNSettingsTests: XCTestCase {
         }
         wait(for: [expectation], timeout: 3)
     }
+     */
 }
