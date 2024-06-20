@@ -1,6 +1,11 @@
 import XCTest
+<<<<<<< HEAD:Tests/MNSettings2Tests/MNSettings2Tests.swift
 @testable import MNSettings2
 import DSLogger
+=======
+@testable import MNSettings
+import Logging
+>>>>>>> 4d1594ac075be248f31cb914a0635bea69b10561:Tests/MNSettingsTests/MNSettingsTests.swift
 import MNUtils
 
 fileprivate let dlog : DSLogger? = DLog.forClass("AppSettingsTest")?.setting(verbose: true)
@@ -71,7 +76,7 @@ final class MNSettings2Tests: XCTestCase {
         let local = Local()
     }
     
-    let dlog : DSLogger? = DLog.forClass("MNSettingsTests")?.setting(verbose: true, testing: true)
+    let dlog : Logger? = Logger(label:"MNSettingsTests") 
     var settings : MNSettings?
     var stats : AppStats?
     @MNSettable(forSettingsNamed: "testSettings", key: "no_cat_count", default: 5) var noCategoryCount
@@ -116,21 +121,21 @@ final class MNSettings2Tests: XCTestCase {
                     if let getVal1 = getVal1 {
                         dlog?.success("\((logPrfx)) getValue from settings: \(getVal1.description) <<")
                     } else {
-                        dlog?.note("\((logPrfx)) getVal FAILED getting value from settings forKey:\(key)")
+                        dlog?.notice("\((logPrfx)) getVal FAILED getting value from settings forKey:\(key)")
                     }
                     
                     Task {
                         if let getVal2 : Int = try await settings?.fetchValueFromPersistors(forKey: key) {
                             dlog?.success("\((logPrfx)) fetch Value from persistors: \(getVal2.description) <<")
                             if getVal2 != getVal1 {
-                                dlog?.note("\((logPrfx)) getVal FAILED getting value. getVal2 != getVal1 \(getVal1.descOrNil) != \(getVal2)")
+                                dlog?.notice("\((logPrfx)) getVal FAILED getting value. getVal2 != getVal1 \(getVal1.descOrNil) != \(getVal2)")
                             }
                         } else {
-                            dlog?.note("\((logPrfx)) getVal FAILED getting value from persistors forKey:\(key)")
+                            dlog?.notice("\((logPrfx)) getVal FAILED getting value from persistors forKey:\(key)")
                         }
                     }
                 } catch let error {
-                    dlog?.note("\((logPrfx)) getVal FAILED getting value. error: \(error)")
+                    dlog?.notice("\((logPrfx)) getVal FAILED getting value. error: \(error)")
                     expectation.fulfill()
                 }
             }
